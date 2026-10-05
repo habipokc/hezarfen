@@ -115,6 +115,9 @@ WS_HEARTBEAT_SECONDS = 15
 # Queued geofence events/heartbeats per socket before a stuck client is disconnected
 WS_MAX_QUEUED_MESSAGES = 1000
 
+# Region DEM (COG, EPSG:4326) written by `make dem`, mounted read-only into the backend
+TERRAIN_DEM_PATH = os.environ.get("TERRAIN_DEM_PATH", "/srv/dem/dem_4326_cog.tif")
+
 REST_FRAMEWORK = {
     # Read-only public data plus demo geofence editing: no accounts in this project.
     # No authentication classes also means no SessionAuthentication, hence no CSRF

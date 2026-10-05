@@ -11,6 +11,7 @@ import { StatusBadge } from './components/StatusBadge'
 import { Toasts } from './components/Toasts'
 import { useDrawPolygon } from './hooks/useDrawPolygon'
 import { useGeofences } from './hooks/useGeofences'
+import { useHillshade } from './hooks/useHillshade'
 import { useLiveAircraft } from './hooks/useLiveAircraft'
 import { useMapInteractions } from './hooks/useMapInteractions'
 import { useMapLibre } from './hooks/useMapLibre'
@@ -24,6 +25,7 @@ import type { LayerGroup, LayerVisibility } from './map/layers'
 
 const INITIAL_VISIBILITY: LayerVisibility = { provinces: true, airports: true, geofences: true, trails: true, callsigns: true }
 const DEFAULT_HISTORY_SECONDS = 3600
+const AIRPORT_ZONE = 'airport_buffer'
 
 export function App() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -37,10 +39,17 @@ export function App() {
   const [visibility, setVisibility] = useState(INITIAL_VISIBILITY)
   const [expanded, setExpanded] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [hillshadeVisible, setHillshadeVisible] = useState(true)
+  const [hillshadeOpacity, setHillshadeOpacity] = useState(0.6)
   const isLive = mode === 'live'
 
   const geofences = useGeofences(mapRef, ready)
   const draw = useDrawPolygon(mapRef, ready)
+  const hillshade = useHillshade(mapRef, ready, hillshadeVisible, hillshadeOpacity)
+  // airport zones stay "airport" even when their alerts are switched off
+  const airportRings = geofences.zones
+    .filter((z) => z.properties.kind === AIRPORT_ZONE)
+    .flatMap((z) => z.geometry.coordinates.slice(0, 1))
 
   const onLiveEvent = (e: GeofenceEvent) => {
     setToasts((list) => pushToast(list, eventToast(e)))
@@ -120,6 +129,7 @@ export function App() {
             icao24={selectedId}
             live={isLive ? live.selected : playback.selected}
             clock={isLive ? undefined : playback.t}
+            airportRings={airportRings}
             onClose={() => select(null)}
           />
         ) : (
@@ -140,7 +150,17 @@ export function App() {
           onDelete={(id) => void geofences.remove(id)}
         />
         <EventFeed events={live.events} onPick={pickEvent} />
-        <LayerPanel visibility={visibility} onChange={toggleLayer} />
+        <LayerPanel
+          visibility={visibility}
+          onChange={toggleLayer}
+          hillshade={{
+            status: hillshade,
+            visible: hillshadeVisible,
+            opacity: hillshadeOpacity,
+            onVisible: setHillshadeVisible,
+            onOpacity: setHillshadeOpacity,
+          }}
+        />
       </Panel>
     </div>
   )

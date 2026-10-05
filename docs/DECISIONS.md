@@ -641,3 +641,66 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** `gzip_types` listesine `text/javascript`, `application/javascript`, `text/css` ve `image/svg+xml` eklendi.
 - **Neden:** Bundle boyutuna bakarken JS'in sıkıştırılmadan gittiği görüldü. Faz 3'te liste yalnızca JSON için yazılmıştı. Dev'de terra-draw modülü 973 kB'tan 256 kB'a iniyor.
 - **Alternatif:** Derleme sırasında önceden sıkıştırılmış `.gz` dosyaları üretip `gzip_static` (Faz 8'de prod imajı için değerlendirilebilir).
+
+## D-074 — DEM araç zinciri: kendi küçük GDAL imajımız (Debian), `tools` profili
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** `make dem`, `scripts/dem/Dockerfile` ile kurulan `hezarfen-gdal` imajında çalışıyor (Debian trixie `gdal-bin` 3.10.3, `python3-gdal`, `python3-numpy`). Compose'ta `gdal` servisi `profiles: ["tools"]` ile tanımlı; `make up` onu başlatmıyor. Sentetik yedek de bu imajda numpy + GDAL Python bağlamalarıyla üretiliyor (planda rasterio yazıyordu).
+- **Neden:** Resmî `ghcr.io/osgeo/gdal` imajı bu makinede "denied" ile çekilemedi (Docker Desktop'taki eski bir ghcr girişi; anonim çekme ayrıca çok yavaştı). Sahibin makinesinde de aynı sorun çıkabilirdi. docker.io + Debian paketleri hem çekilebilir hem sürümü sabit. Backend imajına `python3-gdal` eklemek olmazdı: backend Python 3.14 (python:slim), Debian'ın bağlamaları sistem Python'ı içindir.
+- **Alternatif:** `ghcr.io/osgeo/gdal:ubuntu-small-3.13.3` (daha yeni GDAL, ama ghcr erişimine bağımlı); backend imajında pip ile GDAL derlemek (yavaş, ağır).
+
+## D-075 — DEM verisi: Copernicus GLO-90, deniz = 0, kısmi indirme hata
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** Planlanan desen değişmemiş (`copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N41_00_E028_00_DEM/...tif`). Bbox için 3×6 = 18 karo iniyor (~70 MB, `data/dem/src`'de önbellek). Kaynak karolarda nodata tanımlı değil, deniz 0. 404 "tamamı deniz olan karo" demek ve kabul ediliyor (mozaikte o alan 0 olur). Diğer her indirme hatası betiği durduruyor: aksi halde eksik bir kara karosu sessizce "deniz" olurdu. Hiç karo inmezse `DEM_SOURCE=auto` sentetik yüzeye düşüyor ve `meta.json` `"source": "synthetic"` diyor; UI ve README bunu belirtiyor.
+- **Neden:** Yükseklik verisinde sessiz yanlış, açık hatadan kötüdür.
+- **Alternatif:** GLO-30 (30 m; 9 kat veri, zoom 11 karoları için gereksiz); SRTM (daha eski, 60°K sınırı, boşluklu).
+
+## D-076 — İki çıktı, iki projeksiyon ve resampling seçimleri
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** (1) Analiz için COG **EPSG:4326'da, kaynağın kendi ızgarasında** kırpılıyor (`gdal_translate -projwin`): yeniden örnekleme yok, her değer orijinal bir ölçüm. DEFLATE + float predictor, 512 blok, AVERAGE overview'lar, nodata −32767. (2) Hillshade için mozaik **EPSG:3857'ye bilinear** ile çevriliyor.
+- **Neden:** Örnekleme endpoint'i ham değer istiyor, karo üretimi ise Web Mercator. Yükseklik sürekli bir büyüklük: nearest merdiven basamakları bırakır ve hillshade bunları çizgi çizgi gösterir; cubic kıyı ve uçurumlarda taşma (overshoot) yapabilir. Bilinear ikisinin ortası.
+- **Alternatif:** Tek bir 3857 rasterından örnekleme (ikinci bir resampling hatası eklerdi); cubic.
+
+## D-077 — Hillshade: Mercator z-factor ve saydam RGBA karolar
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** `gdaldem hillshade -az 315 -alt 45 -z 1.32`; z = 1/cos(bölgenin orta enlemi 40.75°). Gri çıktı `shade_rgba.py` ile siyah (gölge) / beyaz (ışık) + alfa'ya çevriliyor; düz zemin (1 + 254·sin 45° ≈ 181) ve deniz saydam. Zoom 6–11, `gdal2tiles --xyz -r average`, 900 karo (~54 MB). MapLibre'de `raster` katmanı, il sınırlarının altında, varsayılan açık, opaklık 0.6 (kaydırıcı 0.1–1).
+- **Neden:** 3857'de yatay mesafeler 1/cos(φ) kadar şişer; z düzeltilmezse eğimler gerçeğinden düz görünür. Gri hillshade koyu altlığı ve tüm denizi griye boyardı; alfa ile yalnızca rölyef görünüyor. Zoom 11 (~58 m/piksel) 90 m'lik veri için yeterli; üstünde MapLibre overzoom yapıyor.
+- **Alternatif:** MapLibre'nin yerleşik `hillshade` katmanı + terrain-RGB karoları (planın istediği GDAL pipeline'ını atlardı); multidirectional hillshade.
+
+## D-078 — Yükseklik örnekleme: bilinear, nodata'da en yakın piksel, tek açık dataset
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** `/api/terrain/elevation` dört komşu piksel merkezinin bilinear ortalamasını döndürüyor (0.1 m). Komşulardan biri nodata ise en yakın piksel kullanılıyor; o da nodata ise `null`. Raster kenarı ile kenar piksel merkezleri arasında kalan nokta kenar piksele kenetleniyor. DEM kapsamı dışı → 400 `out_of_region`; DEM yoksa → 503 `terrain_unavailable` ("run `make dem`"). rasterio dataset'i süreç başına bir kez açılıyor ve bir kilitle korunuyor (dataset thread-safe değil, sync view'lar thread pool'da). Her istekte tek bir `stat` ile dosyanın inode/mtime'ı kontrol ediliyor; `make dem` dosyayı değiştirdiyse yeniden açılıyor. Matematik saf fonksiyonlarda (`terrain/sampling.py`, TDD).
+- **Neden:** Nearest 90 m'lik basamaklar verir. −32767'yi bir ortalamaya katmak saçma sonuç üretir. Restart gerektirmeyen yeniden açma, eski inode'u okuyan backend tuzağını kapatıyor. Doğrulama: Uludağ 2506 m (gerçek 2543; 90 m'de zirve düzleşir), LTBY 786,5 m (OurAirports 788,8).
+- **Alternatif:** PostGIS raster (`raster2pgsql` + `ST_Value`): veritabanını büyütür, Faz 7'nin COG/rasterio dersini atlar; `dataset.sample()` (nearest).
+
+## D-079 — AGL tanımı ve "alçak uçuş" kuralı
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** AGL = `geo_alt − arazi` (yoksa `baro_alt − arazi`, "(baro)" etiketiyle). Geoid düzeltmesi yapılmıyor. "Low flight" rozeti: havada, AGL < 300 m hiçbir `airport_buffer` bölgesinin içinde değil (pasif olanlar dahil: havalimanı yakınlığı bir coğrafya bilgisi, uyarı ayarı değil) ve REST'in verdiği en yakın havalimanına 10 km'den uzak (yalnızca canlı modda; REST şimdiki konumu anlatır). 10 km kuralı tarayıcıda görülen bir yanlış pozitiften sonra eklendi: bölgesi olmayan Yenişehir'e yaklaşan bir uçak rozet alıyordu. Yalnızca seçili uçağın detayında hesaplanıyor; yükseklik ~100 m'lik hücre anahtarıyla (0.001°) önbellekleniyor, hücre değişince eski istek iptal ediliyor. Geçmiş modunda da oynatılan konum için çalışıyor.
+- **Neden:** ADS-B geometrik irtifa genelde WGS84 elipsoidine göre, GLO-90 EGM2008 geoidine göre; bölgede fark ~36–40 m. Ayrıca GLO-90 bir DSM (bina ve ağaç tepesi dahil). 300 m eşiğinde bu belirsizlik kabul edilebilir; learn dosyası ve README açıkça yazıyor. Tüm uçaklar için AGL sunucu tarafında, relay veya ingest'te hesaplanmalıydı; bu fazın kapsamını aşıyor.
+- **Alternatif:** PROJ geoid ızgarasıyla (egm08) düzeltme; AGL'yi relay'de her uçak için hesaplayıp haritada rozetlemek (Faz 8 sonrası fikir).
+
+## D-080 — Hillshade katmanı `meta.json` varsa ekleniyor
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** Frontend `/tiles/hillshade/meta.json`'u okuyor. Dosya yoksa katman eklenmiyor ve panelde "run `make dem`" yazıyor. Varsa raster kaynağı `bounds`, `minzoom` ve `maxzoom` ile ekleniyor; `meta.json` nginx'te `no-cache`, karolar 7 gün önbellekli. Karo URL'si `location.origin` ile kuruluyor, `new URL()` ile değil.
+- **Neden:** `make dem` çalıştırılmamış bir kurulumda harita yüzlerce 404 istemesin. Hata ayıklarken bulunan bir tuzak: `new URL()` `{z}` yer tutucularını `%7Bz%7D`'ye kodluyor; tüm karo istekleri 404 alıyordu. Aynı koşuda "canlıya dönüş" kontrolü de başarısız oldu; URL düzelince ikisi birden geçti.
+- **Alternatif:** Katmanı her zaman eklemek ve 404'leri yok saymak.
+
+## D-081 — Hillshade görünürlüğü katman gruplarının dışında
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** Hillshade, `LAYER_GROUPS` yerine kendi hook'unda (`useHillshade`) yönetiliyor: görünürlük + opaklık; panelde ayrı bir "Terrain" bölümü var.
+- **Neden:** Katman stil yüklendikten sonra, `meta.json` geldiğinde eşzamansız ekleniyor. Görünürlük efekti katmandan önce çalışıp `setLayoutProperty` ile hata verirdi.
+- **Alternatif:** `setGroupVisibility`'ye "katman yoksa atla" koruması eklemek (o zaman sonradan eklenen katman görünürlüğü kaçırırdı).
+
+## D-082 — nginx yapılandırma değişikliği için restart
+
+- **Tarih:** 2026-10-05 (Faz 7)
+- **Karar:** `nginx/nginx.conf` tek dosya olarak bağlı. Dosyayı yeni bir inode ile yazan editörler veya araçlar sonrası `nginx -s reload` yetmiyor; `docker compose restart nginx` gerekiyor.
+- **Neden:** Tek dosya bind mount'u container başlarken inode'a bağlanıyor. Bu fazda `meta.json` kuralı reload ile gelmedi.
+- **Alternatif:** Klasör bağlamak (`./nginx:/etc/nginx/conf.d`); Faz 8'de değerlendirilebilir.

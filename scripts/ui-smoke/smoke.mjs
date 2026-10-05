@@ -81,6 +81,39 @@ const sourceLines = (page, source) =>
 
 const sliderValue = (page) => page.$eval('.playback-slider', (el) => Number(el.value))
 
+const tileResponse = (page) =>
+  page
+    .waitForResponse((r) => /\/tiles\/hillshade\/\d+\/\d+\/\d+\.png$/.test(r.url()) && r.status() === 200, { timeout: 15_000 })
+    .then(() => true, () => false)
+
+async function terrainChecks(page, devMap) {
+  const toggle = page.getByLabel('Hillshade', { exact: true })
+  const ready = await toggle.isEnabled().catch(() => false)
+  check(ready, 'hillshade layer available (tiles from make dem)')
+  if (!ready) return
+  if (devMap) {
+    // Uludag from the north-west: real relief in the first tiles requested
+    const tile = tileResponse(page)
+    await page.evaluate(() => window.__map.jumpTo({ center: [29.1, 40.1], zoom: 9.5 }))
+    check(await tile, 'hillshade tiles load (HTTP 200)')
+    await page.waitForTimeout(1500)
+    await page.screenshot({ path: `${OUT}/desktop-hillshade.png` })
+    const vis = () => page.evaluate(() => window.__map.getLayoutProperty('hillshade', 'visibility'))
+    check((await vis()) === 'visible', 'hillshade visible by default')
+    await toggle.uncheck()
+    check((await vis()) === 'none', 'hillshade toggles off')
+    await toggle.check()
+    check((await vis()) === 'visible', 'hillshade toggles back on')
+    await page.getByLabel('Hillshade opacity').fill('0.9')
+    const opacity = await page.evaluate(() => window.__map.getPaintProperty('hillshade', 'raster-opacity'))
+    check(opacity === 0.9, `opacity slider drives raster-opacity (${opacity})`)
+  } else {
+    const tile = tileResponse(page)
+    await page.mouse.wheel(0, -600)
+    check(await tile, 'hillshade tiles load (HTTP 200)')
+  }
+}
+
 async function historyChecks(page, frames) {
   await page.click('.mode-switch button:has-text("History")')
   await page.waitForSelector('.status-paused')
@@ -199,7 +232,12 @@ async function zoneChecks(page, frames) {
     const loaded = await page
       .waitForFunction(() => [...document.querySelectorAll('.facts dd')].every((d) => d.textContent !== '…'), null, { timeout: 10_000 })
       .then(() => true, () => false)
-    check(loaded, 'details panel loads REST fields (province, nearest airport)')
+    check(loaded, 'details panel loads REST fields (province, nearest airport, terrain)')
+    const agl = await page.evaluate(() => {
+      const dt = [...document.querySelectorAll('.facts dt')].find((d) => d.textContent === 'Above ground')
+      return dt?.nextElementSibling?.textContent ?? null
+    })
+    check(agl !== null && /( m · |on ground)/.test(agl), `details show height above ground (${agl})`)
     log('  details:', (await page.textContent('.details')).replace(/\s+/g, ' ').slice(0, 200))
     const state = await page.evaluate((id) => window.__map.getFeatureState({ source: 'aircraft', id }), target.id)
     check(state.selected === true, 'selected aircraft has feature-state selected')
@@ -209,6 +247,7 @@ async function zoneChecks(page, frames) {
     const track = await sourceLines(page, 'track')
     check(track.lines === 1 && track.points >= 2, `selected aircraft has a track line (${track.points} points)`)
   }
+  await terrainChecks(page, devMap)
   if (devMap) {
     await page.evaluate(() => window.__map.jumpTo({ center: [28.9, 41.0], zoom: 6.5 }))
     await page.waitForTimeout(2500)

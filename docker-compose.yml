@@ -62,6 +62,9 @@ services:
     environment:
       <<: *db-env
       DJANGO_ROLE: web
+    volumes:
+      # region DEM written by `make dem`; read for /api/terrain/elevation
+      - ./data/dem:/srv/dem:ro
     depends_on:
       db:
         condition: service_healthy
@@ -153,6 +156,18 @@ services:
       timeout: 3s
       retries: 6
     restart: unless-stopped
+
+  # GDAL toolbox for `make dem` (scripts/prepare_dem.sh); never started by `up`
+  gdal:
+    image: hezarfen-gdal
+    build:
+      context: ./scripts/dem
+    profiles: ["tools"]
+    <<: *default-env
+    user: "${HEZARFEN_UID:-1000}:${HEZARFEN_GID:-1000}"
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./data:/data
 
 volumes:
   pgdata:

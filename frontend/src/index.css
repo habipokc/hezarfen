@@ -373,6 +373,32 @@ body {
   color: #fca5a5;
 }
 
+.hillshade {
+  display: grid;
+  gap: 6px;
+}
+
+.hillshade input[type='range'] {
+  width: 100%;
+}
+
+.hillshade .badge-low,
+.hillshade-note code {
+  margin-left: 6px;
+}
+
+.hillshade-note {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.badge-low {
+  margin-left: 8px;
+  vertical-align: 2px;
+  background: rgb(245 158 11 / 0.2);
+  color: #fcd34d;
+}
+
 .badge-exit {
   background: rgb(34 197 94 / 0.18);
   color: #86efac;

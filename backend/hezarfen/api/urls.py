@@ -5,6 +5,7 @@ from rest_framework.routers import SimpleRouter
 from geofencing.api import GeofenceEventList, GeofenceViewSet
 from ops.views import health
 from reference.api import AirportList, ProvinceList
+from terrain.api import ElevationView
 from tracking.api import (
     AircraftDetailView,
     AircraftLiveView,
@@ -29,6 +30,7 @@ urlpatterns = [
     path("provinces/", ProvinceList.as_view(), name="provinces"),
     path("airports/", AirportList.as_view(), name="airports"),
     path("stats", StatsView.as_view(), name="stats"),
+    path("terrain/elevation", ElevationView.as_view(), name="terrain-elevation"),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path("docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="docs"),
     path("", include(router.urls)),

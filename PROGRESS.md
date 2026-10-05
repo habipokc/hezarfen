@@ -8,12 +8,12 @@
 |---|---|
 | 0 — İskelet, altyapı, ICD | ✅ Tamamlandı (tag `phase-0`) |
 | 1 — Django, GeoDjango, referans veri | ✅ Tamamlandı (tag `phase-1`) |
-| 2 — Go ingest | ✅ Tamamlandı (tag `phase-2`) — onay bekleniyor |
-| 3 — REST API | ⏳ |
-| 4 — Gerçek zamanlı katman | ⏳ |
-| 5 — Frontend çekirdeği | ⏳ |
-| 6 — İz, playback, geofence çizimi | ⏳ |
-| 7 — Raster / DEM | ⏳ |
+| 2 — Go ingest | ✅ Tamamlandı (tag `phase-2`) |
+| 3 — REST API | ✅ Tamamlandı (tag `phase-3`) |
+| 4 — Gerçek zamanlı katman | ✅ Tamamlandı (tag `phase-4`) |
+| 5 — Frontend çekirdeği | ✅ Tamamlandı (tag `phase-5`) |
+| 6 — İz, playback, geofence çizimi | ✅ Tamamlandı (tag `phase-6`) |
+| 7 — Raster / DEM | ✅ Tamamlandı (tag `phase-7`) — onay bekleniyor |
 | 8 — HTMX ops, CI, teslim | ⏳ |
 
 ## Faz 0 — İskelet, altyapı ve sözleşme (2026-10-05)
@@ -323,6 +323,49 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-6.md`.
 - Geçmiş modunda detay panelinde il ve en yakın havalimanı gizli: REST bunları uçağın şimdiki konumu için veriyor, oynatılan an için değil.
 - Prod'dan dev'e geçişte bir kez `make up --wait` hata verdi, tekrarında tüm servisler sağlıklı açıldı.
 
+## Faz 7 — Raster: DEM, hillshade, arazi örnekleme (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-7.md`.
+
+**Tamamlananlar**
+
+- `make dem` (`scripts/prepare_dem.sh`, `gdal` tools servisi, Debian GDAL 3.10.3; D-074):
+  - Copernicus GLO-90: bbox için 18 karo (~70 MB, `data/dem/src` önbellek). 404 = deniz karosu; diğer indirme hataları betiği durduruyor (D-075).
+  - `gdalinfo` incelemesi → `gdalbuildvrt` → `gdal_translate -of COG` (EPSG:4326, kaynak ızgarası, resampling yok, 50 MB) ve `gdalwarp` EPSG:3857 bilinear (D-076).
+  - `gdaldem hillshade` (az 315, alt 45, z 1.32), siyah/beyaz + alfa'ya çevirme, `gdal2tiles --xyz` z6–11: 900 karo, 54 MB, `meta.json` (D-077).
+  - Yedek yol: `DEM_SOURCE=auto` indirme yapılamazsa sentetik yüzeye düşüyor; `DEM_SOURCE=copernicus|synthetic` ile zorlanabiliyor. Gerçek çalışma ~28 sn.
+- `GET /api/terrain/elevation`: rasterio, dataset süreç başına bir kez açık, kilitli; bilinear, nodata'da en yakın piksel; `out_of_region` (400), `terrain_unavailable` (503); dosya değişince yeniden açılıyor (D-078). Backend `data/dem`'i salt okunur bağlıyor.
+- Frontend:
+  - Hillshade raster katmanı (`meta.json` varsa; D-080), "Terrain" bölümünde aç/kapa ve opaklık kaydırıcısı (D-081), sentetikse "synthetic" etiketi, Copernicus atfı.
+  - Detayda "Terrain" ve "Above ground" (GNSS − arazi, yoksa baro), "Low flight" rozeti: havada, AGL < 300 m, `airport_buffer` dışında ve en yakın havalimanına ≥ 10 km (D-079). Geçmiş modunda da çalışıyor.
+- nginx: `meta.json` `no-cache`.
+- Testler: pytest 134 → 158 (örnekleme matematiği, nodata, kenar, bölge dışı, geçersiz koordinat, 503, tek açılış, yeniden açılış). vitest 79 → 94 (AGL, alçak uçuş, nokta-poligon, havalimanı yakınlığı, önbellek anahtarı).
+- `make ui-smoke` 29 → 36 kontrol: hillshade karoları 200, aç/kapa, opaklık, detayda AGL. Prod derlemesinde karo kontrolü de koşuyor.
+- Dokümanlar: ICD 1.5 (endpoint ayrıntısı, iki hata kodu, IF-9 §7.4), DECISIONS D-074…D-082, README (Terrain bölümü, atıf), ARCHITECTURE (DEM diyagramı).
+- Learn: `12-raster-ve-dem.md` (2.900 kelime); `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- Hillshade katmanı görünüyor ve açılıp kapanıyor (smoke + ekran görüntüsü `data/ui-smoke/desktop-hillshade.png`).
+- Uçak detayında AGL var (smoke: "Above ground" satırı dolu). "Low flight" rozeti tarayıcıda ayrı bir betikle görüldü.
+- `make dem` pipeline'ı baştan sona çalıştırıyor (gerçek veri; ayrıca sentetik ve ağ yokken `auto` yedeği denendi).
+- Örnek değerler: Uludağ 2506 m (gerçek 2543), LTBY 786,5 m (OurAirports 788,8), LTFJ 93,5 m (95,1), Karadeniz 0.
+- Prod derlemesinde endpoint ve karolar çalışıyor (backend uid 10001 COG'u okuyabiliyor). `make test`, `make lint` temiz; dev yığını geri açık.
+
+**Sapmalar**
+
+- GDAL araçları resmî OSGeo imajı yerine kendi Debian imajımızda (ghcr erişim sorunu; D-074). Sentetik yedek rasterio yerine numpy + GDAL Python ile.
+- Plan dışı ekler: `meta.json` ile katman algılama, saydam RGBA hillshade, dosya değişince COG'un yeniden açılması, 10 km havalimanı yakınlığı kuralı, `DEM_BASE_URL` (yedek yolu test etmek için).
+
+**Bilinen sorunlar / notlar**
+
+- AGL'de geoid düzeltmesi yok (GLO-90 EGM2008, ADS-B GNSS irtifası genelde WGS84 elipsoidi; bölgede ~36–40 m fark). GLO-90 bir DSM, şehirlerde bina yüksekliğini içeriyor.
+- Sentetik uçaklar araziyi bilmiyor; bazıları dağın içinden geçiyor ve AGL negatif görünüyor (örn. LTFJ yaklaşmasında −30 m).
+- "Low flight" yalnızca seçili uçağın detayında; tüm uçaklar için hesaplama relay tarafında yapılmalı (Faz 8 sonrası).
+- Geçmiş modunda 10 km kuralı uygulanmıyor (REST'in en yakın havalimanı şimdiki konumu anlatıyor); yalnızca `airport_buffer` bölgeleri sayılıyor.
+- Karolar nginx'te 7 gün önbellekli; `make dem` yeniden çalıştırılırsa tarayıcı eski karoları gösterebilir (sert yenileme gerekir).
+- `nginx.conf` tek dosya bind mount: inode değiştiren düzenlemelerden sonra `nginx -s reload` yetmiyor, `docker compose restart nginx` gerekiyor (D-082).
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 6 onayı. Ardından Faz 7 (raster): Faz 7 planı → DEM indirme (`make dem`), GDAL ile kırpma/COG → hillshade tile'ları → `/api/terrain/elevation` → uçak için AGL → frontend'de hillshade katmanı ve AGL alanı → testler → `learn/12-raster-ve-dem.md`.
+Proje sahibinin Faz 7 onayı. Ardından Faz 8 (HTMX ops paneli, retention döngüsü, CI'ı tamamlama, README ve `docs/DEMO.md`, temiz clone'dan `make up` kontrolü) → `learn/13-htmx-test-ve-cicd.md` ve `learn/99-genel-bakis-ve-mulakat.md`.

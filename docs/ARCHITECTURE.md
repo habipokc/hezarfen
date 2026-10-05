@@ -186,6 +186,25 @@ flowchart LR
 
 The MapLibre instance is created in an effect and kept in a ref; React state only holds what the panel renders (socket status, a redraw counter, the selected id, layer toggles, recent events). Live aircraft never go through React state: messages patch a plain `Map`, and the whole collection is handed to MapLibre with `setData` at most once per second. History playback fetches the whole window once and runs on the client: a `requestAnimationFrame` clock samples every aircraft at the simulated instant (linear interpolation between fixes, heading along the shorter arc, no bridging of gaps longer than three buckets) and writes the same `aircraft` source the live layer uses. Pure logic (message parsing, store, bbox, altitude colours, backoff, throttle, formatting, basemap fallback, SDF generation, playback sampling, tails, track extension, polygon checks, toasts) lives in `frontend/src/lib` and `frontend/src/map/sdf.ts` and is unit-tested with vitest.
 
+## Terrain (`make dem`)
+
+```mermaid
+flowchart LR
+    S3["Copernicus GLO-90<br/>AWS open data (COG tiles)"] -->|"curl, cached"| SRC[("data/dem/src")]
+    SYN["synthetic_dem.py<br/>(fallback)"] -.-> VRT
+    SRC --> VRT["gdalbuildvrt<br/>mosaic.vrt"]
+    VRT -->|"gdal_translate -of COG<br/>crop, EPSG:4326, native grid"| COG[("dem_4326_cog.tif")]
+    VRT -->|"gdalwarp EPSG:3857<br/>bilinear"| M["dem_3857.tif"]
+    M -->|"gdaldem hillshade<br/>z = 1/cos(lat)"| HS["hillshade.tif"]
+    HS -->|"shade_rgba.py<br/>flat → transparent"| RGBA["hillshade_rgba.tif"]
+    RGBA -->|"gdal2tiles --xyz z6–11"| T[("data/tiles/hillshade<br/>+ meta.json")]
+    COG -->|"rasterio, opened once<br/>bilinear sample"| API["GET /api/terrain/elevation"]
+    T -->|"nginx /tiles/"| MAP["MapLibre raster layer"]
+    API --> DET["aircraft details: terrain, AGL, low-flight badge"]
+```
+
+Everything runs in a throw-away GDAL container (`gdal` service, `tools` profile), so the host needs no GDAL. The backend reads the COG with rasterio (its wheel bundles its own GDAL) and never writes it; nginx serves the tiles as static files.
+
 ## Environments
 
 - **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml` (dev images tagged `:dev`, so they never overwrite the prod images). Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).

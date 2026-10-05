@@ -7,6 +7,7 @@ export const AIRCRAFT_LAYER = 'aircraft'
 export const TAILS_SOURCE = 'tails'
 export const TRACK_SOURCE = 'track'
 export const GEOFENCES_SOURCE = 'geofences'
+export const HILLSHADE_LAYER = 'hillshade'
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
@@ -165,6 +166,44 @@ export function installLayers(map: MapLibreMap, font: string[]): void {
     map.addLayer(layer, layer.type === 'symbol' ? undefined : firstSymbol)
   }
   for (const layer of aircraftLayers(font)) map.addLayer(layer)
+}
+
+/** tiles/hillshade/meta.json, written by scripts/prepare_dem.sh */
+export interface HillshadeMeta {
+  source: 'copernicus' | 'synthetic'
+  minzoom: number
+  maxzoom: number
+  bounds: [number, number, number, number]
+}
+
+/**
+ * Pre-rendered hillshade (black/white with alpha) between the basemap and our reference
+ * layers. Beyond `maxzoom` MapLibre overzooms the last level; `bounds` keeps it from asking for
+ * tiles outside the region. Starts hidden: useHillshade sets visibility and opacity.
+ */
+export function installHillshade(map: MapLibreMap, meta: HillshadeMeta): void {
+  map.addSource(HILLSHADE_LAYER, {
+    type: 'raster',
+    // not api(): URL() would percent-encode the {z}/{x}/{y} placeholders
+    tiles: [`${window.location.origin}/tiles/hillshade/{z}/{x}/{y}.png`],
+    tileSize: 256,
+    minzoom: meta.minzoom,
+    maxzoom: meta.maxzoom,
+    bounds: meta.bounds,
+    attribution:
+      meta.source === 'copernicus'
+        ? 'Terrain: Copernicus DEM GLO-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA'
+        : 'Terrain: synthetic (not real elevation)',
+  })
+  const below = map.getLayer('provinces-fill') ? 'provinces-fill' : undefined
+  map.addLayer(
+    {
+      id: HILLSHADE_LAYER, type: 'raster', source: HILLSHADE_LAYER,
+      layout: { visibility: 'none' },
+      paint: { 'raster-opacity': 0, 'raster-fade-duration': 150 },
+    },
+    below,
+  )
 }
 
 export function setGroupVisibility(map: MapLibreMap, visibility: LayerVisibility): void {

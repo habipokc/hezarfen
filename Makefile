@@ -18,7 +18,7 @@ env: ## Create .env from .env.example if missing
 	@test -f .env || (cp .env.example .env && echo "created .env from .env.example")
 
 dirs:
-	@mkdir -p data/raw data/tiles data/reference
+	@mkdir -p data/raw data/tiles data/reference data/dem
 
 up: env dirs ## Build and start the dev stack (hot-reload), wait until healthy
 	$(COMPOSE) up -d --build --renew-anon-volumes --wait
@@ -89,8 +89,9 @@ ui-smoke: dirs ## Headless-browser check of the live map on localhost (screensho
 	    -v "$(CURDIR)/scripts/ui-smoke:/src:ro" -v "$(CURDIR)/data/ui-smoke:/out" $(UI_SMOKE_IMAGE) \
 	    sh -c 'cp -r /src /tmp/ui && cd /tmp/ui && npm install --silent --no-audit --no-fund && node smoke.mjs'
 
-dem: ## Build DEM, hillshade tiles and COG (Phase 7)
-	@echo "dem: implemented in Phase 7"
+dem: env dirs ## Download the DEM, build the COG and hillshade tiles (DEM_SOURCE=auto|copernicus|synthetic)
+	$(COMPOSE) --profile tools build gdal
+	$(COMPOSE) --profile tools run --rm -e DEM_SOURCE=$(or $(DEM_SOURCE),auto) gdal sh /scripts/prepare_dem.sh
 
 RECORD_DIR ?= ingest/testdata/opensky
 record: env ## Record anonymous OpenSky snapshots (COUNT=25 INTERVAL=10 RECORD_DIR=ingest/testdata/opensky)

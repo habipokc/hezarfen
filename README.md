@@ -2,7 +2,7 @@
 
 Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
 
-> Status: **Phase 6 — tracks, history playback and geofence drawing.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **Phase 7 — terrain: DEM, hillshade and height above ground.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
 
 ## Stack
 
@@ -17,6 +17,7 @@ make up          # builds images, starts the dev stack with hot reload, waits un
 curl localhost:8800/api/health
 open http://localhost:8800/
 make seed        # airports (OurAirports) + Turkish provinces (Natural Earth) via ogr2ogr, LTFM/LTFJ geofences
+make dem         # Copernicus DEM -> elevation COG + hillshade tiles (~70 MB download, cached)
 make superuser   # then edit geofences on a map at http://localhost:8800/admin/
 make test        # Go, frontend and backend test suites (inside containers)
 make down
@@ -106,6 +107,31 @@ make ui-smoke    # headless Chromium (Playwright image): map, WebSocket frames, 
 
 `make ui-smoke` writes screenshots to `data/ui-smoke/`. The first run pulls the ~2 GB Playwright image. In the dev server the map is exposed as `window.__map` for console debugging.
 
+## Terrain
+
+`make dem` runs [scripts/prepare_dem.sh](scripts/prepare_dem.sh) in a GDAL container (`gdal` service, `tools` profile):
+
+1. downloads the Copernicus DEM GLO-90 tiles covering the region bbox (1°×1°, cached in `data/dem/src/`),
+2. prints `gdalinfo` for one tile and mosaics them into a VRT (`gdalbuildvrt`),
+3. crops to the bbox as a Cloud Optimized GeoTIFF in EPSG:4326 for sampling (`data/dem/dem_4326_cog.tif`),
+4. reprojects to EPSG:3857 (bilinear), computes a hillshade (`gdaldem`, z-factor corrects the Mercator stretch),
+   turns it into black/white with alpha so flat ground and the sea stay transparent,
+5. cuts XYZ PNG tiles for zoom 6–11 (`gdal2tiles`) into `data/tiles/hillshade/`, served by nginx at `/tiles/hillshade/`.
+
+If the download fails (no network), `DEM_SOURCE=auto` (default) falls back to a **synthetic** surface (Gaussian hills
+roughly where the real mountains are); the map's layer panel then marks the hillshade as "synthetic". Force a source with
+`make dem DEM_SOURCE=copernicus` or `DEM_SOURCE=synthetic`. Rerunning is safe: the backend picks up a rebuilt COG without a restart.
+
+```bash
+curl 'localhost:8800/api/terrain/elevation?lon=29.2213&lat=40.0703'   # Uludağ: {"elevation_m": 2506.4, ...}
+```
+
+In the map, "Hillshade" (layer panel, with an opacity slider) shows the relief; the aircraft details show the terrain
+elevation under the aircraft and its height above ground (AGL = GNSS altitude − terrain), with a **Low flight** badge below
+300 m AGL outside the airport zones. Heights are approximate: GLO-90 is a surface model (buildings and forest canopy
+included) referenced to the EGM2008 geoid, while ADS-B geometric altitude is usually height above the WGS84 ellipsoid
+(about 36–40 m higher in this region).
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, data flow, environments
@@ -116,4 +142,5 @@ make ui-smoke    # headless Chromium (Playwright image): map, WebSocket frames, 
 
 - Airports: [OurAirports](https://ourairports.com/data/) (public domain)
 - Province boundaries: [Natural Earth](https://www.naturalearthdata.com/) admin-1 (public domain)
+- Terrain: Copernicus DEM GLO-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; all rights reserved
 - Basemap: [OpenFreeMap](https://openfreemap.org/) tiles, © [OpenMapTiles](https://openmaptiles.org/) © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
