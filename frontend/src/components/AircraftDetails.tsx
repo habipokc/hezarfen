@@ -7,14 +7,17 @@ import type { Aircraft } from '../lib/types'
 interface Props {
   icao24: string
   live: Aircraft | null
+  /** History mode: the simulated time (ages are relative to it, not to the wall clock). */
+  clock?: number
   onClose: () => void
 }
 
-export function AircraftDetails({ icao24, live, onClose }: Props) {
+export function AircraftDetails({ icao24, live, clock, onClose }: Props) {
   const { detail, error } = useAircraftDetail(icao24)
   // live fields come from the socket (fresh every update), the rest from REST
   const a = live ?? detail
-  const now = useNow(1000) / 1000
+  const wall = useNow(1000, clock === undefined) / 1000
+  const now = clock ?? wall
 
   return (
     <section className="card details" aria-label="Aircraft details">
@@ -46,18 +49,23 @@ export function AircraftDetails({ icao24, live, onClose }: Props) {
           <dd>{formatVrate(a.vrate)}</dd>
           <dt>Squawk</dt>
           <dd className="mono">{a.squawk ?? '—'}</dd>
-          <dt>Province</dt>
-          <dd>{detail ? (detail.province ?? 'over sea / abroad') : '…'}</dd>
-          <dt>Nearest airport</dt>
-          <dd>
-            {detail?.nearest_airport
-              ? `${detail.nearest_airport.name} (${formatDistance(detail.nearest_airport.distance_m)})`
-              : detail ? '—' : '…'}
-          </dd>
+          {/* REST describes where the aircraft is now, which is wrong for a replayed moment */}
+          {clock === undefined && (
+            <>
+              <dt>Province</dt>
+              <dd>{detail ? (detail.province ?? 'over sea / abroad') : '…'}</dd>
+              <dt>Nearest airport</dt>
+              <dd>
+                {detail?.nearest_airport
+                  ? `${detail.nearest_airport.name} (${formatDistance(detail.nearest_airport.distance_m)})`
+                  : detail ? '—' : '…'}
+              </dd>
+            </>
+          )}
           <dt>Last seen</dt>
           <dd>
             {formatAge(a.ts, now)}
-            {!live && ' · not in view'}
+            {!live && (clock === undefined ? ' · not in view' : ' · not in this frame')}
           </dd>
         </dl>
       )}

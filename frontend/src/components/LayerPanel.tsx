@@ -4,7 +4,8 @@ import type { LayerGroup, LayerVisibility } from '../map/layers'
 const LABELS: Record<LayerGroup, string> = {
   provinces: 'Provinces',
   airports: 'Airports',
-  geofences: 'Geofences',
+  geofences: 'Zones',
+  trails: 'Trails (2 min)',
   callsigns: 'Callsigns (zoom ≥ 8)',
 }
 

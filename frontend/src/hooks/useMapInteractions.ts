@@ -12,8 +12,11 @@ export function useMapInteractions(
   selectedId: string | null,
   onSelect: (icao24: string | null) => void,
   visibility: LayerVisibility,
+  capturesClicks: () => boolean,
 ) {
   const select = useEffectEvent((icao24: string | null) => onSelect(icao24))
+  // while terra-draw owns the pointer, clicks add corners instead of selecting aircraft
+  const isDrawing = useEffectEvent(() => capturesClicks())
 
   useEffect(() => {
     const map = mapRef.current
@@ -32,8 +35,9 @@ export function useMapInteractions(
       hovered = id
       map.getCanvas().style.cursor = id ? 'pointer' : ''
     }
-    const onMove = (e: MapMouseEvent) => setHover(hit(e))
+    const onMove = (e: MapMouseEvent) => setHover(isDrawing() ? null : hit(e))
     const onClick = (e: MapMouseEvent) => {
+      if (isDrawing()) return
       const feature = hitFeature(e)
       select((feature?.properties.icao24 as string | undefined) ?? null)
       // on phones the opening bottom sheet covers the lower half: move the aircraft up

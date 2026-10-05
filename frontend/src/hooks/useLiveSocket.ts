@@ -10,6 +10,7 @@ export type SocketState =
   | { status: 'connecting' }
   | { status: 'live' } // subscribed and the snapshot arrived
   | { status: 'waiting'; retryAt: number; attempt: number }
+  | { status: 'paused' } // closed on purpose (history mode)
 
 export const liveSocketUrl = () =>
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/live/`
@@ -20,8 +21,14 @@ const subscribeFrame = (bbox: Bbox) => JSON.stringify({ type: 'subscribe', bbox 
  * One WebSocket to `/ws/live/` for the component's lifetime: subscribes with the current
  * bbox on open and on every bbox change, reconnects with exponential backoff, and closes a
  * silent socket after the watchdog fires (a dead TCP connection may never emit `close`).
+ * `enabled = false` closes the socket and keeps it closed until enabled again.
  */
-export function useLiveSocket(url: string, bbox: Bbox | null, onMessage: (m: ServerMessage) => void): SocketState {
+export function useLiveSocket(
+  url: string,
+  bbox: Bbox | null,
+  onMessage: (m: ServerMessage) => void,
+  enabled = true,
+): SocketState {
   const [state, setState] = useState<SocketState>({ status: 'connecting' })
   const socketRef = useRef<WebSocket | null>(null)
 
@@ -32,6 +39,7 @@ export function useLiveSocket(url: string, bbox: Bbox | null, onMessage: (m: Ser
   })
 
   useEffect(() => {
+    if (!enabled) return
     let disposed = false
     let attempt = 0
     let retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -102,8 +110,10 @@ export function useLiveSocket(url: string, bbox: Bbox | null, onMessage: (m: Ser
       window.removeEventListener('online', onOnline)
       clearTimeout(retryTimer)
       if (socketRef.current) drop(socketRef.current)
+      // the next connection (re-enabled, new url) starts from scratch
+      setState({ status: 'connecting' })
     }
-  }, [url])
+  }, [url, enabled])
 
   // a new viewport → new subscribe; the server answers with a fresh snapshot
   useEffect(() => {
@@ -111,5 +121,5 @@ export function useLiveSocket(url: string, bbox: Bbox | null, onMessage: (m: Ser
     if (bbox && ws?.readyState === WebSocket.OPEN) ws.send(subscribeFrame(bbox))
   }, [bbox])
 
-  return state
+  return enabled ? state : { status: 'paused' }
 }

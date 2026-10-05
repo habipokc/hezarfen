@@ -165,10 +165,26 @@ flowchart LR
     VB -->|subscribe| WS
     WS -->|geofence_event| EV["event list"]
     MAP -->|click| SEL["selected icao24"] -->|"GET /api/aircraft/{id}/ every 15 s"| DET["details panel"]
-    REF["/api/provinces · /api/airports · /api/geofences"] --> MAP
+    REF["/api/provinces · /api/airports"] --> MAP
 ```
 
-The MapLibre instance is created in an effect and kept in a ref; React state only holds what the panel renders (socket status, a redraw counter, the selected id, layer toggles, recent events). Live aircraft never go through React state: messages patch a plain `Map`, and the whole collection is handed to MapLibre with `setData` at most once per second. Pure logic (message parsing, store, bbox, altitude colours, backoff, throttle, formatting, basemap fallback, SDF generation) lives in `frontend/src/lib` and `frontend/src/map/sdf.ts` and is unit-tested with vitest.
+Phase 6 adds a second producer for the same sources (history mode), the selected track and geofence editing:
+
+```mermaid
+flowchart LR
+    MODE{"mode"} -->|live| LA["useLiveAircraft<br/>LiveStore + Tails (2 min)"]
+    MODE -->|"history: socket closed"| PB["usePlayback<br/>GET /api/playback (one request)"]
+    PB --> TL["buildTimeline<br/>per-aircraft fixes"] --> CLK["rAF clock × speed<br/>≤ 20 draws/s"]
+    CLK -->|"sampleAt / tailsAt / trackUntil"| SRCS[("sources: aircraft · tails · track")]
+    LA -->|"≤ 1/s"| SRCS
+    TR["useTrack<br/>GET /track + live fixes"] -->|live| SRCS
+    DRAW["terra-draw polygon"] -->|"name → POST /api/geofences/"| API["REST"]
+    API -->|"geofences.changed"| RELAY["relay reloads zones"]
+    GF["useGeofences<br/>GET / PATCH / DELETE"] -->|setData| GSRC[("source geofences<br/>promoteId id")]
+    WSE["geofence_event"] --> TOAST["toast + event list"] & BLINK["feature-state flash"] --> GSRC
+```
+
+The MapLibre instance is created in an effect and kept in a ref; React state only holds what the panel renders (socket status, a redraw counter, the selected id, layer toggles, recent events). Live aircraft never go through React state: messages patch a plain `Map`, and the whole collection is handed to MapLibre with `setData` at most once per second. History playback fetches the whole window once and runs on the client: a `requestAnimationFrame` clock samples every aircraft at the simulated instant (linear interpolation between fixes, heading along the shorter arc, no bridging of gaps longer than three buckets) and writes the same `aircraft` source the live layer uses. Pure logic (message parsing, store, bbox, altitude colours, backoff, throttle, formatting, basemap fallback, SDF generation, playback sampling, tails, track extension, polygon checks, toasts) lives in `frontend/src/lib` and `frontend/src/map/sdf.ts` and is unit-tested with vitest.
 
 ## Environments
 

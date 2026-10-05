@@ -1,7 +1,7 @@
 import type { SocketState } from '../hooks/useLiveSocket'
 import { useNow } from '../hooks/useNow'
 
-const LABEL = { connecting: 'Connecting…', live: 'Live', waiting: 'Offline' } as const
+const LABEL = { connecting: 'Connecting…', live: 'Live', waiting: 'Offline', paused: 'History' } as const
 
 export function StatusBadge({ socket, count }: { socket: SocketState; count: number }) {
   // tick only while a countdown is visible
@@ -10,7 +10,7 @@ export function StatusBadge({ socket, count }: { socket: SocketState; count: num
   const detail =
     socket.status === 'waiting'
       ? `retry in ${Math.max(0, Math.ceil((socket.retryAt - now) / 1000))} s`
-      : socket.status === 'live'
+      : socket.status === 'live' || socket.status === 'paused'
         ? `${count} aircraft`
         : null
 

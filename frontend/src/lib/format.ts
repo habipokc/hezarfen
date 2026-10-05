@@ -39,3 +39,19 @@ export function formatAge(ts: number, now: number): string {
 export function formatClock(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString('en-GB', { hour12: false })
 }
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** Unix seconds → value of an `<input type="datetime-local">` (local time, minute precision). */
+export function toLocalInput(ts: number): string {
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** The reverse of `toLocalInput`; null for an empty or malformed value. */
+export function fromLocalInput(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value)
+  if (!m) return null
+  const [, y, mo, d, h, mi] = m.map(Number) as [number, number, number, number, number, number]
+  return Math.floor(new Date(y, mo - 1, d, h, mi).getTime() / 1000)
+}

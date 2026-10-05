@@ -541,3 +541,103 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
   - Prod derlemesinde worker dosyası hiç üretilmiyordu. Dev'de de dep pre-bundling ana dosyayı worker'ın yanından taşıdığı için 404 alınıyordu.
   - Worker paylaşılan bir chunk'tan import yaptığı için dosyayı olduğu gibi kopyalamak yetmiyor; Vite worker'ı bağımlılıklarıyla tek dosyada paketliyor. Dev ve prod aynı yolu kullanıyor.
 - **Alternatif:** `optimizeDeps.exclude` (yalnızca dev'i düzeltiyordu); worker'ı `public/`'e kopyalamak (sürüm yükseltmede elle güncellenmesi gerekirdi).
+
+## D-065 — Geofence çizimi: terra-draw 1.36.0 + MapLibre adapter 1.4.1
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - `terra-draw` 1.36.0 ve `terra-draw-maplibre-gl-adapter` 1.4.1 (peer: maplibre-gl ≥ 4). Yalnızca polygon modu; kendini kesen halka çizim sırasında `ValidateNotSelfIntersecting` ile reddediliyor.
+  - Adapter, style yüklendikten sonra kuruluyor (kendi kaynak ve katmanlarını ekliyor). Halka kapanınca mod `static`'e geçiyor; şekil, kaydedilene ya da vazgeçilene kadar ekranda kalıyor.
+  - Halkayı kapatan tıklama terra-draw'ın `finish` olayından sonra MapLibre'nin `click`'ine de ulaşıyordu ve altındaki uçağı seçiyordu. `finish`'te bir bayrak kalkıyor, `setTimeout(0)` ile iniyor; çizim sürerken ve bu tıklamada uçak seçimi yapılmıyor.
+  - Paket tembel yüklenmiyor: `index` chunk'ı ~345 kB (sıkıştırılmamış). Bunun ~270 kB'ı terra-draw; gzip'le ~50 kB. maplibre ayrı chunk'ta kalıyor.
+- **Neden:** Plan terra-draw'ı adıyla istiyor. Çerçeveden bağımsız, MapLibre 6 ile çalışan güncel bir adapter'ı var; mapbox-gl-draw'ın MapLibre uyumluluğu yamalarla sağlanıyor.
+- **Alternatif:** `@mapbox/mapbox-gl-draw` (resmi olarak Mapbox için); terra-draw'ı "Draw a zone" tıklanınca dinamik `import()` ile yüklemek (ilk yüklemede ~270 kB tasarruf; Faz 8'de bundle bütçesine bakılırken değerlendirilebilir).
+
+## D-066 — Tüm uçaklara 2 dakikalık kuyruk: istemci tarafında, varsayılan açık
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - Kuyruklar sunucudan istenmiyor; istemci gördüğü fix'lerden üretiyor (`Tails`, uçak başına son 120 sn). Canlıda 1 sn'lik redraw ile aynı anda `tails` kaynağına yazılıyor; geçmiş modunda zaman çizelgesinden (`tailsAt`) hesaplanıyor.
+  - Çizgi rengi uçak ikonuyla aynı irtifa ifadesi, opaklık 0,45. "Trails (2 min)" katman anahtarıyla kapatılabiliyor.
+- **Neden:**
+  - Ölçüm (headless Chromium, yazılımsal WebGL/SwiftShader, `setData` → `idle` medyanı): 60 uçak × 60 nokta ~200 ms, 300 × 60 ~120 ms, 1000 × 60 ~240 ms. Bu sayılar ilk ölçümün ısınma maliyetini ve canlı redraw'larla çakışmayı da içeriyor, gürültülü. Gerçek GPU'da daha hızlı; en kötü durumda bile 1 sn'lik redraw aralığının altında.
+  - Synthetic modda ~60, OpenSky'da Marmara için birkaç yüz uçak bekleniyor.
+  - Ek istek ve sunucu yükü yok. Sayfa açıldıktan sonra kuyruk 2 dakikada doluyor; bu kabul edilebilir.
+- **Alternatif:** Yalnızca seçili uçağa iz (kuyruksuz); kuyrukları REST'ten toplu çekmek (her bbox değişiminde ağır bir sorgu).
+
+## D-067 — Seçili uçağın izi: REST'ten 30 dakika + canlı uzatma
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - Seçimde `GET /api/aircraft/{icao24}/track` (varsayılan son 30 dk) çekiliyor. Sonra gelen her canlı fix, izin `end_ts`'inden yeniyse çizginin sonuna ekleniyor (`extendTrack`; değişiklik yoksa aynı nesne döner, `setData` atlanır).
+  - İstek sürerken gelen canlı fix kaybolmuyor: yanıt geldiğinde son canlı kayıt bir effect event ile okunup ekleniyor.
+  - İz React state'inde değil, bir ref'te tutuluyor ve doğrudan `track` kaynağına yazılıyor. Geçmiş modunda aynı kaynağı oynatıcı dolduruyor (pencere başından o ana kadarki yol).
+- **Neden:** İz yalnızca haritada çiziliyor; React'in render etmesi gereken bir şey değil. REST'i periyodik tekrar çekmek yerine canlı akışla uzatmak hem ucuz hem gecikmesiz.
+- **Alternatif:** İzi her 15 sn'de yeniden çekmek.
+
+## D-068 — Playback mimarisi: tek REST isteği, istemcide saat
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - Geçmiş penceresi (15 dk – 2 saat, bitiş zamanı seçilebilir; varsayılan "son 1 saat") tek `GET /api/playback` isteğiyle çekiliyor.
+  - Bucket pencereden hesaplanıyor: ~360 kare hedefi, 5 sn'nin katı (15–30 dk → 5 sn, 1 saat → 10 sn, 2 saat → 20 sn). 1 saatlik synthetic pencere ~21.600 konum ediyor.
+  - Kareler uçak başına zaman sıralı fix listesine (`buildTimeline`) çevriliyor.
+  - Oynatma `requestAnimationFrame` döngüsüyle ilerliyor: simüle zaman = gerçek geçen süre × hız (1×, 10×, 60×; varsayılan 10×), pencere sonunda duruyor. Sondayken play'e basılırsa baştan başlıyor.
+  - Haritaya en fazla 20 çizim/sn yapılıyor. React'e saat 4 kez/sn bildiriliyor (kaydırıcı, saat, detay paneli).
+- **Neden:**
+  - Pencere en fazla 2 saat ve gzip'li; tek istek sonrası kaydırma, geri sarma ve hız değişimi ağ beklemeden oluyor.
+  - Canlıdaki "≤ 1/sn setData" kuralı geçmiş modunda akıcılığı öldürürdü. 20/sn, geojson-vt'nin her `setData`'da yeniden tile'laması ile göz için akıcılık arasında bir denge.
+- **Alternatif:** Sunucunun kareleri WebSocket'ten belirli hızda itmesi (sunucuda oturum başına saat; geri sarma ve hız değişimi için protokol gerekirdi); sayfalı ya da akışlı (NDJSON) çekme (2 saatlik sınırda gereksiz).
+
+## D-069 — İnterpolasyon kuralları
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - Uçağın kendi fix zamanları (`ts`) arasında lon/lat lineer interpolasyonla hesaplanıyor.
+  - Heading kısa yaydan dönüyor (350° → 10° geçişi 0°'dan geçer). İrtifa ve hız lineer. İki taraftan biri `null` ise önceki fix'in değeri kullanılıyor (değer uydurulmuyor).
+  - İki fix arası 3 bucket'tan uzunsa arası köprülenmiyor. Uçak son fix'inden sonra bir bucket boyunca yerinde tutuluyor, sonra gizleniyor. İlk fix'inden önce görünmüyor.
+- **Neden:**
+  - Bucket 5–20 sn; 250 m/sn'deki bir uçak için ardışık fix'ler 1,25–5 km arayla geliyor. Bu mesafede düz lon/lat çizgisi ile büyük daire arasındaki sapma 1 metrenin altında; ikon boyutunun çok altında.
+  - Büyük boşlukları köprülemek, olmayan bir düz uçuş icat ederdi (ör. inişten sonra başka pistten kalkış).
+- **Alternatif:** Büyük daire (slerp) interpolasyonu; boşluklarda da interpolasyon.
+
+## D-070 — Geçmiş modunda WebSocket kapanıyor
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - `useLiveSocket` bir `enabled` bayrağı alıyor; `false` olunca soket kapanıyor ve durum `paused` oluyor (rozet "History"). Canlıya dönünce bağlantı sıfırdan kuruluyor ve gelen snapshot store'u dolduruyor.
+  - Mod değişiminde canlı store ve kuyruklar temizleniyor; oynatıcı da çıkarken `aircraft`, `tails` ve `track` kaynaklarını boşaltıyor.
+- **Neden:** Plan aboneliğin askıya alınmasını istiyor. Açık bir soket boşuna delta taşır ve iki üretici aynı kaynağa yazmaya çalışırdı. Geri dönüşteki snapshot zaten tam durum veriyor.
+- **Alternatif:** Soketi açık tutup mesajları yok saymak; sunucuya "unsubscribe" mesajı eklemek (ICD değişikliği gerektirirdi).
+
+## D-071 — Geofence listesi ve doğrulama
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - `geofences` kaynağı artık bir URL değil, `useGeofences`'in çektiği veri. Tüm bölgeler gösteriliyor; pasifler soluk ve gri. `promoteId: 'id'`.
+  - Kendi POST, PATCH ve DELETE işlemlerimizden sonra liste yeniden çekiliyor. Relay değişikliği `geofences.changed` ile kendisi öğreniyor; tarayıcıya ayrıca bir WebSocket mesajı gönderilmiyor.
+  - Çizilen halka kaydetmeden önce istemcide kontrol ediliyor: en az 3 farklı köşe, en fazla 1000 köşe, alan 0,25–20.000 km² (küresel alan formülü), bölgeyle kesişim. Sunucunun shapely doğrulaması otorite olarak kalıyor; hatası formda gösteriliyor.
+  - Silme onay istiyor; bölgenin olayları da siliniyor (`on_delete=CASCADE`).
+- **Neden:**
+  - Tek kullanıcılı yerel uygulama. Başka bir sekmenin yaptığı değişikliği anında görmek için ICD'ye yeni bir mesaj tipi eklemeye değmez.
+  - İstemci ön kontrolü kullanıcıya anında geri bildirim veriyor ve gereksiz 400'leri önlüyor.
+- **Alternatif:** `geofences_changed` WebSocket mesajı; sunucu kontrolüne tek başına güvenmek.
+
+## D-072 — Olay bildirimleri: toast, liste, yanıp sönme
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:**
+  - Canlı `geofence_event` üç şey yapıyor:
+    - Toast: üstte, en fazla 4 tane, 6 sn sonra kayboluyor. Tıklanınca haritayı uçağa götürüp seçiyor.
+    - Olay listesine ekleniyor.
+    - Bölgeyi yanıp söndürüyor: `feature-state flash`, 350 ms aralıkla 3 kez. Yalnızca paint değişiyor, veri değişmiyor.
+  - Yeni kaydedilen bir bölgenin içinde zaten bulunan uçaklar için hemen `enter` geliyor (D-052'nin "ilk kurulum" kuralı). `make ui-smoke` bu ilk toast'lardan sonra, sınırı gerçekten geçen bir uçağın toast'ını ayrıca bekliyor ve konumdan tarayıcıya gecikmeyi WebSocket frame'lerinden ölçüyor.
+- **Neden:** Feature-state, kaynağı yeniden yüklemeden tek bir poligonun stilini değiştirmenin yolu. Toast sınırı, olay fırtınasında ekranın dolmasını önlüyor; tamamı listede kalıyor.
+- **Alternatif:** Tarayıcı bildirimleri (Notification API; izin istemi gerektirir); yanıp sönmeyi CSS animasyonlu bir DOM marker ile yapmak.
+
+## D-073 — nginx JS ve CSS'i de sıkıştırıyor
+
+- **Tarih:** 2026-10-05 (Faz 6)
+- **Karar:** `gzip_types` listesine `text/javascript`, `application/javascript`, `text/css` ve `image/svg+xml` eklendi.
+- **Neden:** Bundle boyutuna bakarken JS'in sıkıştırılmadan gittiği görüldü. Faz 3'te liste yalnızca JSON için yazılmıştı. Dev'de terra-draw modülü 973 kB'tan 256 kB'a iniyor.
+- **Alternatif:** Derleme sırasında önceden sıkıştırılmış `.gz` dosyaları üretip `gzip_static` (Faz 8'de prod imajı için değerlendirilebilir).

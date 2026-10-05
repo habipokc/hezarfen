@@ -386,3 +386,270 @@ body {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* --- phase 6: modes, playback, zones, toasts ------------------------------------ */
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgb(15 23 42 / 0.6);
+}
+
+.segmented button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.segmented button.on {
+  background: var(--accent);
+  color: #0b1220;
+  font-weight: 600;
+}
+
+.mode-switch {
+  align-self: stretch;
+}
+
+.mode-switch button {
+  flex: 1;
+  padding: 6px 10px;
+}
+
+.status-paused .status-dot {
+  background: var(--accent);
+}
+
+.button {
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: rgb(56 189 248 / 0.15);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.button.secondary {
+  border-color: var(--border);
+  background: transparent;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.small {
+  font-size: 0.75rem;
+}
+
+.card p.small {
+  margin: 6px 0 0;
+}
+
+.history-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: end;
+  gap: 8px;
+}
+
+.history-form .button {
+  grid-column: span 2;
+}
+
+.history-form label,
+.zone-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.zone-form {
+  gap: 8px;
+}
+
+select,
+input[type='datetime-local'],
+.zone-form input {
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.zones {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.zones li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zones li.inactive .zone-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.zone-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-button.small {
+  margin-left: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 1rem;
+}
+
+/* playback bar floats over the map, left of the desktop panel */
+.playback-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 36px;
+  transform: translateX(calc(-50% - 180px));
+  width: min(560px, calc(100% - 400px));
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.35);
+  z-index: 3;
+}
+
+.playback-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.playback-time {
+  font-size: 0.95rem;
+}
+
+.playback-count {
+  font-size: 0.75rem;
+  margin-right: auto;
+}
+
+.playback-slider {
+  width: 100%;
+  margin: 6px 0 0;
+  accent-color: var(--accent);
+}
+
+.playback-ends {
+  justify-content: space-between;
+  font-size: 0.7rem;
+}
+
+.play {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #0b1220;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.play:disabled {
+  opacity: 0.5;
+}
+
+.toasts {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(calc(-50% - 180px));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.toast button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+  animation: toast-in 200ms ease-out;
+}
+
+.toast-enter button {
+  border-color: rgb(239 68 68 / 0.6);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (max-width: 640px) {
+  .playback-bar {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    transform: none;
+    bottom: calc(var(--sheet-peek) + 30px);
+  }
+
+  .toasts {
+    left: 56px;
+    right: 8px;
+    transform: none;
+  }
+
+}

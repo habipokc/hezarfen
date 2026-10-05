@@ -167,6 +167,32 @@ def test_playback_validation(api, query, code):
     assert resp.json()["error"]["code"] == code
 
 
+def test_playback_window_boundaries(api, make_aircraft):
+    make_aircraft("aaaaa1", 28.9, 41.0)
+    t0 = 1_791_187_200
+    # one fix exactly on start (inclusive) and one exactly on end (exclusive)
+    add_positions("aaaaa1", [(t0, 28.0, 41.0), (t0 + 7200, 28.5, 41.0)])
+    resp = api.get(f"/api/playback?start={t0}&end={t0 + 7200}&bucket=600")
+    assert resp.status_code == 200
+    frames = resp.json()["frames"]
+    assert [f["ts"] for f in frames] == [t0]
+    assert frames[0]["aircraft"][0]["ts"] == t0
+    # one second over the 2 h limit, and one over the largest bucket
+    resp = api.get(f"/api/playback?start={t0}&end={t0 + 7201}")
+    assert resp.json()["error"]["code"] == "window_too_large"
+    resp = api.get(f"/api/playback?start={t0}&end={t0 + 60}&bucket=601")
+    assert resp.json()["error"]["code"] == "invalid_parameter"
+
+
+def test_playback_default_window_is_last_15_minutes(api, make_aircraft):
+    make_aircraft("aaaaa1", 28.9, 41.0)
+    now = int(time.time())
+    add_positions("aaaaa1", [(now - 1000, 28.0, 41.0), (now - 60, 28.1, 41.0)])
+    body = api.get("/api/playback").json()
+    assert body["end"] - body["start"] == 900
+    assert [a["ts"] for f in body["frames"] for a in f["aircraft"]] == [now - 60]
+
+
 def test_live_query_uses_index_friendly_bbox_operator(api, make_aircraft):
     """The bbox filter must be `geom && envelope` (answered by the GiST index), not a
     per-row function like ST_Within that only some planners can rewrite."""

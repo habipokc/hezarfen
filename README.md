@@ -2,7 +2,7 @@
 
 Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
 
-> Status: **Phase 5 — live map (React + TypeScript + MapLibre).** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **Phase 6 — tracks, history playback and geofence drawing.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
 
 ## Stack
 
@@ -96,9 +96,12 @@ Geofence events are produced by the `relay` worker (`make logs s=relay`) and sto
 - Click an aircraft for details: live altitude, speed, heading and squawk from the socket, plus province and nearest airport from `GET /api/aircraft/{icao24}/`.
 - Provinces, airports, geofences and callsigns can be toggled. The panel lists recent geofence enter/exit events; clicking one flies to the aircraft.
 - Narrower than 640 px (phones), the side panel becomes a bottom sheet.
+- Selecting an aircraft draws its last 30 minutes (`GET /api/aircraft/{icao24}/track`) and the line keeps growing with live updates. Every live aircraft also has a 2-minute tail (layer "Trails").
+- **History** mode pauses the WebSocket and replays a past window (15 min – 2 h, any end time) from `GET /api/playback`: play/pause, time slider, 1×/10×/60×. Positions are interpolated between frames, so motion is smooth at any speed.
+- **Zones:** "Draw a zone" starts polygon drawing ([terra-draw](https://github.com/JamesLMilner/terra-draw)); click corners, click the first corner to close, name it and save (`POST /api/geofences/`). Zones can be switched active/inactive or deleted from the list. A live enter/exit event shows a toast, lands in the event list and makes its zone blink.
 
 ```bash
-make ui-smoke    # headless Chromium (Playwright image) checks the map, the WebSocket frames and the 375 px layout
+make ui-smoke    # headless Chromium (Playwright image): map, WebSocket frames, 375 px layout, track, playback, zone drawing
 ```
 
 `make ui-smoke` writes screenshots to `data/ui-smoke/`. The first run pulls the ~2 GB Playwright image. In the dev server the map is exposed as `window.__map` for console debugging.

@@ -4,12 +4,18 @@ import { AIRCRAFT_ICON, createAircraftIcon } from './aircraftIcon'
 
 export const AIRCRAFT_SOURCE = 'aircraft'
 export const AIRCRAFT_LAYER = 'aircraft'
+export const TAILS_SOURCE = 'tails'
+export const TRACK_SOURCE = 'track'
+export const GEOFENCES_SOURCE = 'geofences'
+
+const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
 /** Layer groups the user can switch on and off. */
 export const LAYER_GROUPS = {
   provinces: ['provinces-fill', 'provinces-line'],
   airports: ['airports-circle', 'airports-label'],
-  geofences: ['geofences-fill', 'geofences-line'],
+  geofences: ['geofences-fill', 'geofences-line', 'geofences-label'],
+  trails: ['tails'],
   callsigns: ['aircraft-label'],
 } as const
 export type LayerGroup = keyof typeof LAYER_GROUPS
@@ -36,10 +42,31 @@ function referenceLayers(font: string[]): LayerSpecification[] {
       id: 'provinces-line', type: 'line', source: 'provinces',
       paint: { 'line-color': '#38bdf8', 'line-opacity': 0.35, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 1.2] },
     },
-    { id: 'geofences-fill', type: 'fill', source: 'geofences', paint: { 'fill-color': '#ef4444', 'fill-opacity': 0.1 } },
     {
-      id: 'geofences-line', type: 'line', source: 'geofences',
-      paint: { 'line-color': '#f87171', 'line-width': 1.5, 'line-dasharray': [3, 2] },
+      // a live enter/exit event blinks its zone through feature-state `flash`; inactive zones fade
+      id: 'geofences-fill', type: 'fill', source: GEOFENCES_SOURCE,
+      paint: {
+        'fill-color': '#ef4444',
+        'fill-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'flash'], false], 0.45,
+          ['get', 'active'], 0.1,
+          0.02,
+        ],
+      },
+    },
+    {
+      id: 'geofences-line', type: 'line', source: GEOFENCES_SOURCE,
+      paint: {
+        'line-color': ['case', ['get', 'active'], '#f87171', '#64748b'],
+        'line-width': ['case', ['boolean', ['feature-state', 'flash'], false], 3, 1.5],
+        'line-dasharray': [3, 2],
+      },
+    },
+    {
+      id: 'geofences-label', type: 'symbol', source: GEOFENCES_SOURCE, minzoom: 7,
+      layout: { 'text-field': ['get', 'name'], 'text-font': font, 'text-size': 11 },
+      paint: { 'text-color': ['case', ['get', 'active'], '#fca5a5', '#94a3b8'], ...halo },
     },
     {
       id: 'airports-circle', type: 'circle', source: 'airports',
@@ -66,6 +93,16 @@ function referenceLayers(font: string[]): LayerSpecification[] {
 
 function aircraftLayers(font: string[]): LayerSpecification[] {
   return [
+    {
+      id: 'tails', type: 'line', source: TAILS_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': altitudeColorExpression(), 'line-width': 1.5, 'line-opacity': 0.45 },
+    },
+    {
+      id: 'track', type: 'line', source: TRACK_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#f8fafc', 'line-width': 2.5, 'line-opacity': 0.85 },
+    },
     {
       // hover/selection ring: feature-state can drive paint, not layout (icon-size)
       id: 'aircraft-highlight', type: 'circle', source: AIRCRAFT_SOURCE,
@@ -111,10 +148,13 @@ export function installLayers(map: MapLibreMap, font: string[]): void {
   map.addImage(AIRCRAFT_ICON, createAircraftIcon(), { pixelRatio: 2, sdf: true })
   map.addSource('provinces', { type: 'geojson', data: api('/api/provinces/') })
   map.addSource('airports', { type: 'geojson', data: api('/api/airports/?type=large_airport,medium_airport') })
-  map.addSource('geofences', { type: 'geojson', data: api('/api/geofences/?active=true') })
+  // filled from REST by useGeofences, so a saved zone appears without a page reload
+  map.addSource(GEOFENCES_SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id' })
+  map.addSource(TAILS_SOURCE, { type: 'geojson', data: EMPTY })
+  map.addSource(TRACK_SOURCE, { type: 'geojson', data: EMPTY })
   map.addSource(AIRCRAFT_SOURCE, {
     type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] },
+    data: EMPTY,
     // feature ids for feature-state come from this property instead of array positions
     promoteId: 'icao24',
   })

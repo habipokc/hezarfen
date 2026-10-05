@@ -1,10 +1,11 @@
 import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { EVENT_LIST_SIZE, mergeEvents } from '../lib/events'
 import { LiveStore } from '../lib/liveStore'
+import { Tails } from '../lib/tails'
 import { type Throttled, throttle } from '../lib/throttle'
 import type { Aircraft, Bbox, GeofenceEvent, ServerMessage } from '../lib/types'
-import { AIRCRAFT_SOURCE } from '../map/layers'
+import { AIRCRAFT_SOURCE, TAILS_SOURCE } from '../map/layers'
 import { liveSocketUrl, useLiveSocket } from './useLiveSocket'
 
 const REDRAW_MS = 1000
@@ -13,17 +14,32 @@ const REDRAW_MS = 1000
  * Live aircraft for the current viewport. Messages patch a plain `Map` (no React state per
  * aircraft); at most once a second the whole collection goes to MapLibre with `setData`
  * and a `version` counter tells React that derived values (count, selected) changed.
+ * The same redraw feeds the 2-minute tails. `enabled = false` (history mode) closes the
+ * socket and leaves both sources to the player.
  */
-export function useLiveAircraft(mapRef: RefObject<MapLibreMap | null>, ready: boolean, bbox: Bbox | null, selectedId: string | null) {
+export function useLiveAircraft(
+  mapRef: RefObject<MapLibreMap | null>,
+  ready: boolean,
+  bbox: Bbox | null,
+  selectedId: string | null,
+  enabled: boolean,
+  onLiveEvent: (event: GeofenceEvent) => void,
+) {
   const [store] = useState(() => new LiveStore())
+  const [tails] = useState(() => new Tails())
   const [version, setVersion] = useState(0)
   const [events, setEvents] = useState<GeofenceEvent[]>([])
 
   const redrawRef = useRef<Throttled | null>(null)
 
   useEffect(() => {
+    if (!enabled) return
     const redraw = throttle(() => {
-      mapRef.current?.getSource<GeoJSONSource>(AIRCRAFT_SOURCE)?.setData(store.toFeatureCollection())
+      const map = mapRef.current
+      const collection = store.toFeatureCollection()
+      tails.sync(collection.features.map((f) => f.properties))
+      map?.getSource<GeoJSONSource>(AIRCRAFT_SOURCE)?.setData(collection)
+      map?.getSource<GeoJSONSource>(TAILS_SOURCE)?.setData(tails.toFeatureCollection())
       setVersion((v) => v + 1)
     }, REDRAW_MS)
     redrawRef.current = redraw
@@ -32,8 +48,11 @@ export function useLiveAircraft(mapRef: RefObject<MapLibreMap | null>, ready: bo
     return () => {
       redraw.cancel()
       redrawRef.current = null
+      // leaving live mode: what we hold is about to be stale; the next snapshot refills it
+      store.clear()
+      tails.clear()
     }
-  }, [mapRef, store, ready])
+  }, [mapRef, store, tails, ready, enabled])
 
   // recent history from REST so the list is not empty until the next live event
   useEffect(() => {
@@ -45,33 +64,32 @@ export function useLiveAircraft(mapRef: RefObject<MapLibreMap | null>, ready: bo
     return () => controller.abort()
   }, [])
 
-  const onMessage = useCallback(
-    (m: ServerMessage) => {
-      switch (m.type) {
-        case 'snapshot':
-          store.applySnapshot(m.aircraft)
-          redrawRef.current?.()
-          break
-        case 'delta':
-          store.applyDelta(m.upserts, m.removes)
-          redrawRef.current?.()
-          break
-        case 'geofence_event': {
-          const { type: _type, ...event } = m
-          setEvents((list) => mergeEvents(list, [event]))
-          break
-        }
-        case 'error':
-          console.warn('live socket error', m.code, m.message)
-          break
-        case 'heartbeat':
-          break
+  // useLiveSocket reads this through an effect event: it may change on every render
+  const onMessage = (m: ServerMessage) => {
+    switch (m.type) {
+      case 'snapshot':
+        store.applySnapshot(m.aircraft)
+        redrawRef.current?.()
+        break
+      case 'delta':
+        store.applyDelta(m.upserts, m.removes)
+        redrawRef.current?.()
+        break
+      case 'geofence_event': {
+        const { type: _type, ...event } = m
+        setEvents((list) => mergeEvents(list, [event]))
+        onLiveEvent(event)
+        break
       }
-    },
-    [store],
-  )
+      case 'error':
+        console.warn('live socket error', m.code, m.message)
+        break
+      case 'heartbeat':
+        break
+    }
+  }
 
-  const socket = useLiveSocket(liveSocketUrl(), bbox, onMessage)
+  const socket = useLiveSocket(liveSocketUrl(), bbox, onMessage, enabled)
 
   // `version` is the dependency that makes reading the mutable store here safe
   const selected: Aircraft | null = useMemo(

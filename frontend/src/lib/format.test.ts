@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { formatAge, formatAltitude, formatDistance, formatHeading, formatSpeed, formatVrate } from './format'
+import {
+  formatAge,
+  formatAltitude,
+  formatDistance,
+  formatHeading,
+  formatSpeed,
+  formatVrate,
+  fromLocalInput,
+  toLocalInput,
+} from './format'
 
 describe('formatters', () => {
   it('altitude in metres and feet', () => {
@@ -36,5 +45,18 @@ describe('formatters', () => {
     expect(formatAge(100, 100)).toBe('just now')
     expect(formatAge(100, 100 + 125)).toBe('2 min ago')
     expect(formatAge(100, 100 + 7300)).toBe('2 h ago')
+  })
+})
+
+describe('datetime-local values', () => {
+  it('round-trips to the minute', () => {
+    const ts = 1_791_187_245 // :45 seconds are dropped
+    expect(toLocalInput(ts)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
+    expect(fromLocalInput(toLocalInput(ts))).toBe(ts - 45)
+  })
+
+  it('rejects empty or malformed input', () => {
+    expect(fromLocalInput('')).toBeNull()
+    expect(fromLocalInput('2026-10-05 12:00')).toBeNull()
   })
 })

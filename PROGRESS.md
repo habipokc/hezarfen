@@ -278,6 +278,51 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-5.md`.
 - Basemap ve glyph'ler internetten geliyor; çevrimdışıyken yedek style görünüyor, etiketler (demotiles da erişilemezse) çıkmayabilir.
 - `make ui-smoke` ilk çalıştırmada ~2 GB'lık (açılmış hali 3,5 GB) Playwright imajını indiriyor.
 
+## Faz 6 — İleri özellikler: iz, geçmiş oynatma, geofence çizimi (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-6.md`.
+
+**Tamamlananlar**
+
+- İz: seçili uçağın son 30 dk'sı `/track`'ten, canlı fix'lerle uzuyor (D-067). Tüm uçaklara istemcide üretilen 2 dk'lık kuyruk, irtifa renginde, "Trails" anahtarıyla (D-066, performans ölçümüyle).
+- Geçmiş modu:
+  - Live/History anahtarı; geçmişte WebSocket kapanıyor, rozet "History" (D-070).
+  - Pencere 15 dk–2 saat, bitiş zamanı seçilebilir; tek `/api/playback` isteği, ~360 kare hedefli bucket (D-068).
+  - rAF saati, 1×/10×/60×, kaydırıcı; kareler arası lineer konum, kısa yaydan heading, 3 bucket'tan uzun boşluklar köprülenmiyor (D-069). Haritaya ≤ 20 çizim/sn.
+  - Detay paneli ve seçili uçağın yolu oynatma zamanını izliyor.
+- Geofence çizimi:
+  - terra-draw 1.36.0 + MapLibre adapter 1.4.1; kendini kesen halka çizimde reddediliyor; kapanış tıklaması uçak seçmiyor (D-065).
+  - İsim formu, istemci ön kontrolü (köşe, alan, bölge; D-071), `POST`; listeden aktif/pasif (`PATCH`) ve silme (`DELETE`, onaylı).
+  - Geofence kaynağı REST verisiyle besleniyor (`promoteId: id`); pasif bölgeler soluk.
+- Olay bildirimleri: toast (en fazla 4, 6 sn, tıklayınca uçağa uçuş), olay listesi, bölgenin `feature-state` ile yanıp sönmesi (D-072).
+- nginx JS/CSS'i de gzip'liyor (D-073).
+- Testler: vitest 38 → 79 (playback örnekleme ve saat, kuyruk, iz uzatma, poligon alanı ve kontrolü, toast, API hata zarfı, datetime-local). pytest 132 → 134 (playback pencere sınırları, varsayılan pencere).
+- `make ui-smoke` 16 → 29 kontrol: iz çizgisi, kuyruklar, geçmiş modu 60× hız ölçümü, soketin duraklaması, canlıya dönüş, fareyle bölge çizimi, kayıt, gerçek sınır geçişi toast'ı, olay gecikmesi, silme.
+- Dokümanlar: DECISIONS D-065…D-073, README (Live map), ARCHITECTURE (Faz 6 diyagramı).
+- Learn: `11-zaman-serisi-cografi-veri.md`; `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- Uçak seçince izi görünüyor (smoke: 12–24 noktalık çizgi).
+- Son 1 saat 60× oynatılabiliyor (smoke: ölçülen 55–58×; 87 uçak, 21.650 konum).
+- Kullanıcının çizdiği bölgeye giren synthetic uçak için toast çıkıyor. Konum zaman damgasından tarayıcıya en kötü 0,9 sn (17 olay). Bölge içindeki uçaklar için kayıt anında `enter` geliyor (D-052).
+- Prod derlemesinde (`make up-prod`) çizim ve oynatma hatasız; konsol hatası yok. `make test`, `make lint` temiz; `make up` geri açıldı.
+
+**Sapmalar**
+
+- Plan dışı ekler: geçmiş penceresinin bitiş zamanını seçme, geçmişte de kuyruk ve seçili uçağın yolu, istemci tarafı poligon ön kontrolü, nginx gzip düzeltmesi.
+- Geçmiş modunda haritaya ≤ 20 çizim/sn (canlıdaki ≤ 1/sn kuralı oynatmaya uygulanmadı, D-068).
+
+**Bilinen sorunlar / notlar**
+
+- `make ui-smoke`'un bölge adımı gerçek bir sınır geçişini bekliyor; trafiğe göre 20–100 sn sürüyor (zaman aşımı 180 sn).
+- Smoke'un Faz 6 adımları `window.__map`'e dayandığı için yalnızca dev'de koşuyor; prod ayrıca elle (betikle) doğrulandı.
+- Başka bir sekmede ya da Swagger'dan yapılan bölge değişikliği bu sekmede sayfa yenilenene ya da kendi işlemimize kadar görünmüyor (D-071).
+- terra-draw ilk yüklemede geliyor (~270 kB sıkıştırılmamış, ~50 kB gzip); tembel yükleme Faz 8'e bırakıldı.
+- Geçmiş penceresinde veri yoksa (stack kapalıyken geçen süre) uçaklar görünmüyor; panel "No positions recorded" diyor.
+- Geçmiş modunda detay panelinde il ve en yakın havalimanı gizli: REST bunları uçağın şimdiki konumu için veriyor, oynatılan an için değil.
+- Prod'dan dev'e geçişte bir kez `make up --wait` hata verdi, tekrarında tüm servisler sağlıklı açıldı.
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 5 onayı. Ardından Faz 6 (ileri özellikler): Faz 6 planı → seçili uçağın izi (`/api/aircraft/{icao24}/track`, canlı uzatma) → geçmiş oynatma (`/api/playback`, zaman çubuğu, hız, interpolasyon) → haritada geofence çizimi (POST/PATCH/DELETE, `geofences.changed` ile canlı yenileme) → olay bildirimleri → vitest → `learn/11-zaman-serisi-cografi-veri.md`.
+Proje sahibinin Faz 6 onayı. Ardından Faz 7 (raster): Faz 7 planı → DEM indirme (`make dem`), GDAL ile kırpma/COG → hillshade tile'ları → `/api/terrain/elevation` → uçak için AGL → frontend'de hillshade katmanı ve AGL alanı → testler → `learn/12-raster-ve-dem.md`.
