@@ -18,6 +18,7 @@ flowchart LR
         R[("Redis<br/>pub/sub + channel layer")]
         RELAY["relay (Django mgmt cmd)<br/>delta + geofence state machine"]
         BE["backend (Django ASGI)<br/>DRF + Channels + HTMX ops"]
+        MAINT["maintenance (Django mgmt cmd)<br/>hourly retention"]
         FE["frontend<br/>Vite + React + MapLibre"]
         NG["nginx :8800"]
     end
@@ -35,6 +36,8 @@ flowchart LR
     R -- channel layer --> BE
     BE <--> DB
     BE -- "geofences.changed" --> R
+    MAINT -- "DELETE old positions" --> DB
+    ING -. "/metrics" .-> BE
     BROWSER <--> NG
     NG -- "/api /ws /ops /admin" --> BE
     NG -- "/" --> FE
@@ -205,8 +208,41 @@ flowchart LR
 
 Everything runs in a throw-away GDAL container (`gdal` service, `tools` profile), so the host needs no GDAL. The backend reads the COG with rasterio (its wheel bundles its own GDAL) and never writes it; nginx serves the tiles as static files.
 
+## Operations panel and maintenance (Phase 8)
+
+```mermaid
+flowchart LR
+    B[Browser /ops/] -- "GET page (CSRF token in hx-headers)" --> V[ops views]
+    B -- "hx-get every 5 s: /ops/ingest, /ops/events" --> V
+    B -- "hx-post /ops/geofences/{id}/active" --> V
+    B -- "hx-post /ops/retention (hx-confirm)" --> V
+    V -- "GET /metrics (1 s timeout)" --> ING[ingest]
+    V --> DB[(PostGIS)]
+    V -- "geofences.changed after commit" --> R[(Redis)]
+    V -- "ops:retention:last" --> R
+    M["maintenance service<br/>run_every(3600 s)"] -- "batched DELETE (20k rows)" --> DB
+    M -- "ops:retention:last" --> R
+```
+
+The panel is hypermedia: every response is HTML. `/ops/` renders the whole page from the same fragment templates that the polled endpoints return, so a fragment and the page can never disagree. Each polled fragment carries its own `hx-get`/`hx-trigger` attributes because it replaces the polling element (`outerHTML`). Buttons send an explicit target state, so a double click cannot flip a geofence back.
+
+Retention runs in a separate `maintenance` service rather than inside the relay: the relay runs all of its ORM calls on one thread, and a multi-second DELETE there would delay the geofence checks. Deletes go in batches of 20,000 rows, each its own transaction, so ingest's inserts never wait behind one long transaction.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` (validated locally with `make lint-ci`: actionlint + shellcheck):
+
+| Job | What it proves |
+|---|---|
+| `ingest` | `go vet`, `gofmt`, unit tests |
+| `backend` | ruff (lint + format), migrations in sync, pytest against a PostGIS service container |
+| `integration` | Django migrates a fresh PostGIS, then the Go store/publish tests run against that real schema and Redis (fails if they skip) |
+| `frontend` | `tsc`, eslint, vitest, production build |
+| `stack` | every image builds (prod targets + GDAL tools), `make up-prod` comes up healthy, offline seed, `make smoke` (curl checks incl. `/ops/`) |
+
 ## Environments
 
+- **Services:** `db`, `redis`, `backend`, `relay`, `maintenance`, `ingest`, `frontend`, `nginx`; `gdal` only on demand (`make dem`, profile `tools`).
 - **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml` (dev images tagged `:dev`, so they never overwrite the prod images). Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).
 - **Prod-like** (`make up-prod`): only `docker-compose.yml`. Images are built with `target: prod` (non-root backend, distroless Go binary, static frontend served by nginx).
 - **Isolation:** compose project `name: hezarfen`, no `container_name`. Host ports: 8800 (nginx), and 127.0.0.1-only 55432 (PostGIS) and 56379 (Redis) for debugging.

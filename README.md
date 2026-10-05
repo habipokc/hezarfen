@@ -1,29 +1,73 @@
 # Hezarfen
 
-Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
+Real-time air traffic and geospatial analysis for the Marmara region of Türkiye. A Go service polls ADS-B positions (OpenSky Network, or a recording, or a built-in simulator), PostGIS stores them, a Django relay streams them over WebSockets to a React + MapLibre map, and the same map runs the geospatial work: geofence alerts, track playback, terrain and height above ground. A server-rendered HTMX panel shows how the pipeline is doing.
 
-> Status: **Phase 7 — terrain: DEM, hillshade and height above ground.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **all phases (0–8) done.** Progress log: [PROGRESS.md](PROGRESS.md) · 5-minute walkthrough: [docs/DEMO.md](docs/DEMO.md)
 
-## Stack
+| Live map with a drawn geofence | Terrain, height above ground |
+|---|---|
+| ![Live map: aircraft coloured by altitude, airport geofences and a user-drawn zone with an enter toast](docs/screenshots/map-zone.png) | ![Hillshade over Uludağ and the aircraft details panel with terrain elevation and AGL](docs/screenshots/terrain.png) |
+| **History playback** | **Ops panel (Django + HTMX)** |
+| ![History mode replaying the last hour at 60x](docs/screenshots/history.png) | ![Ops panel: ingest status, retention, geofence switches and the event table](docs/screenshots/ops.png) |
 
-Go ingest service · Django (GeoDjango, DRF, Channels) · PostgreSQL/PostGIS · Redis · React + TypeScript + MapLibre GL JS · nginx · Docker Compose.
+## What it does
+
+- **Live map:** aircraft icons rotate with their heading and are coloured by altitude; only the visible area is streamed (WebSocket, at most one delta per second).
+- **Geofences:** 15 km zones around Istanbul's two airports plus zones you draw on the map; enter/exit events are detected server-side and pushed to the browser within a second.
+- **Track and playback:** the selected aircraft's last 30 minutes; any past window up to 2 hours replayed at 1×/10×/60× with interpolated motion.
+- **Terrain:** Copernicus DEM → hillshade tiles and an elevation API; aircraft details show terrain under the aircraft, height above ground and a low-flight badge.
+- **Operations:** `/ops/` shows ingest health (mode, last cycle, OpenSky credits, rejections), the latest geofence events (self-refreshing), switches for geofences and on-demand retention. Old position history is pruned hourly.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    OS[OpenSky API / recordings / simulator] --> ING["ingest (Go)"]
+    ING -- "batch upsert" --> DB[("PostGIS")]
+    ING -- "positions.batch" --> R[("Redis")]
+    R --> RELAY["relay<br/>delta + geofence state"]
+    RELAY --> DB
+    RELAY -- "channel layer" --> BE["backend (Django ASGI)<br/>REST · WebSocket · /ops"]
+    BE <--> DB
+    MAINT["maintenance<br/>hourly retention"] --> DB
+    NG["nginx :8800"] --> BE
+    NG --> FE["frontend<br/>React + MapLibre"]
+    NG --> TILES[("hillshade tiles")]
+    B[Browser] <--> NG
+```
+
+Eight services in one compose project (`db`, `redis`, `backend`, `relay`, `maintenance`, `ingest`, `frontend`, `nginx`) plus an on-demand GDAL toolbox. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Every interface between them (database tables, Redis messages, WebSocket, REST, files) is specified in [docs/ICD.md](docs/ICD.md).
+
+**Stack:** Go 1.27 · Django 6.1 (GeoDjango, DRF, Channels) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 · React 19 + TypeScript + MapLibre GL JS · HTMX 2 · GDAL · nginx · Docker Compose.
 
 ## Quick start
 
-Requirements: Docker (with Compose v2), `make`, `git`. No Go, Node or GDAL needed on the host.
+Requirements: Docker (with Compose v2), `make`, `git`. No Go, Node, Python or GDAL needed on the host: every tool runs in a container.
 
 ```bash
-make up          # builds images, starts the dev stack with hot reload, waits until healthy
-curl localhost:8800/api/health
-open http://localhost:8800/
-make seed        # airports (OurAirports) + Turkish provinces (Natural Earth) via ogr2ogr, LTFM/LTFJ geofences
-make dem         # Copernicus DEM -> elevation COG + hillshade tiles (~70 MB download, cached)
-make superuser   # then edit geofences on a map at http://localhost:8800/admin/
-make test        # Go, frontend and backend test suites (inside containers)
-make down
+git clone <this repo> hezarfen && cd hezarfen
+make up          # creates .env from .env.example, builds, starts the dev stack, waits until healthy
+make seed        # airports (OurAirports) + provinces (Natural Earth) + the two airport geofences
+make dem         # optional: Copernicus DEM -> elevation COG + hillshade tiles (~70 MB download, ~30 s)
+make smoke       # curl checks through nginx
 ```
 
-`make seed` caches downloads in `data/reference/`; without network (or with `make seed REFERENCE_OFFLINE=1`) it loads the small hand-made fixtures in `scripts/fixtures/` instead.
+Open <http://localhost:8800/> for the map and <http://localhost:8800/ops/> for the ops panel. With no OpenSky credentials the ingest service runs in **synthetic** mode: 60 simulated aircraft flying between the region's airports, so everything works offline (`make seed REFERENCE_OFFLINE=1` uses bundled fixtures instead of downloads).
+
+| Command | What it does |
+|---|---|
+| `make up` / `make down` | Dev stack with hot reload (Django, relay, Go via air, Vite HMR) / stop it (`make clean` also drops the database) |
+| `make up-prod` | Production-like stack: prod images, non-root, static frontend |
+| `make test` | Go, frontend (vitest) and backend (pytest on real PostGIS) suites |
+| `make lint` / `make lint-ci` | go vet + gofmt, tsc + eslint, ruff + migration check / actionlint + shellcheck |
+| `make smoke` / `make ui-smoke` | curl checks / headless-browser checks of the running stack (screenshots in `data/ui-smoke/`) |
+| `make logs s=ingest` | Follow one service's logs |
+| `make ws` | Tail the live WebSocket feed in the terminal |
+| `make prune` | Run retention now |
+| `make superuser` | Django admin user (geofences on a map at `/admin/`) |
+| `make psql` | psql into PostGIS |
+
+Host ports (override in `.env`): `8800` (nginx, the only public entry point), `127.0.0.1:55432` (PostGIS) and `127.0.0.1:56379` (Redis) for debugging with psql, QGIS or redis-cli.
 
 ## Data sources
 
@@ -36,7 +80,7 @@ The Go ingest service has four modes, chosen with `SOURCE_MODE` in `.env`:
 | `replay` | Plays recorded OpenSky responses (`REPLAY_DIR`, default `data/raw/`) re-timed to now, `REPLAY_SPEED` times faster |
 | `live` | Polls OpenSky every 10 s (30 s when credits drop below 20%) and archives every raw response to `data/raw/YYYY-MM-DD/HHMMSS.json.gz` |
 
-Out of the box the stack runs `synthetic`. To watch the data flow:
+Out of the box the stack runs `synthetic`. The ops panel and `/api/stats` show the resolved mode. To watch the data flow:
 
 ```bash
 docker compose exec redis redis-cli SUBSCRIBE positions.batch     # one message per cycle
@@ -132,15 +176,49 @@ elevation under the aircraft and its height above ground (AGL = GNSS altitude �
 included) referenced to the EGM2008 geoid, while ADS-B geometric altitude is usually height above the WGS84 ellipsoid
 (about 36–40 m higher in this region).
 
+## Ops panel
+
+`http://localhost:8800/ops/` is a server-rendered page (Django templates + [HTMX](https://htmx.org/), no JavaScript build):
+
+- **Ingest:** mode, last cycle, interval, OpenSky credits left (and % of the daily budget in live mode), batch size, errors, rejected records per cleaning rule, live aircraft. Refreshes every 5 s while the tab is visible.
+- **Geofence events:** the latest 50, refreshing every 5 s.
+- **Geofences:** activate/deactivate buttons; the relay picks the change up immediately (same notification as the REST API).
+- **Retention:** rows (estimate), oldest row, the last run and a "Run retention now" button.
+
+The `maintenance` service deletes positions older than `POSITIONS_RETENTION_DAYS` (default 7) every `RETENTION_INTERVAL_SECONDS` (default 3600), in batches of 20,000 rows. Like the REST API, the panel has no login (local single-user deployment); its POSTs are CSRF-protected.
+
+## Tests and CI
+
+- **Backend:** pytest against a real PostGIS (spatial SQL, migrations, GiST/BRIN behaviour cannot be faked by SQLite), plus pure-logic tests (geofence state machine, delta coalescing, sampling maths, scheduler).
+- **Ingest:** Go unit tests (parsing, cleaning rules, synthetic flights); store/publish integration tests against the migrated schema and Redis.
+- **Frontend:** vitest for the pure modules (message parsing, delta store, interpolation, bbox, terrain helpers).
+- **End to end:** `make smoke` (HTTP) and `make ui-smoke` (Playwright: map, WebSocket frames, drawing a zone and waiting for a real boundary crossing, playback speed, terrain, ops panel, 375 px layout).
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs Go vet/fmt/test, ruff + pytest with a PostGIS service container, the Go↔PostGIS integration tests, tsc/eslint/vitest/build, and finally builds every image, starts the prod-like stack, seeds it offline and runs `make smoke`.
+
+## Repository layout
+
+```
+ingest/      Go service: sources (live, replay, synthetic), cleaning, PostGIS writer, Redis publisher, /metrics
+backend/     Django project: tracking, reference, geofencing, terrain, realtime (relay, WebSocket), ops (panel, maintenance)
+frontend/    React + TypeScript + MapLibre single-page app
+nginx/       Gateway config
+scripts/     Reference data and DEM pipelines, smoke tests, fixtures
+docs/        ICD, architecture, decision log, demo script, phase plans
+```
+
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, data flow, environments
-- [docs/ICD.md](docs/ICD.md) — interface contract (Redis messages, WebSocket, REST, units)
-- [docs/DECISIONS.md](docs/DECISIONS.md) — decision log (Turkish)
+- [docs/DEMO.md](docs/DEMO.md) — a 5-minute demo script
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, data flow, CI, environments
+- [docs/ICD.md](docs/ICD.md) — interface contract (Redis messages, WebSocket, REST, files, units)
+- [docs/DECISIONS.md](docs/DECISIONS.md) — decision log with alternatives (Turkish)
 
-## Data attribution
+## Data sources, licences and attribution
 
-- Airports: [OurAirports](https://ourairports.com/data/) (public domain)
-- Province boundaries: [Natural Earth](https://www.naturalearthdata.com/) admin-1 (public domain)
-- Terrain: Copernicus DEM GLO-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; all rights reserved
-- Basemap: [OpenFreeMap](https://openfreemap.org/) tiles, © [OpenMapTiles](https://openmaptiles.org/) © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
+- **Aircraft positions:** [The OpenSky Network](https://opensky-network.org/). OpenSky data is provided for research and non-commercial use under the terms of use published on its website; this project is non-commercial. Recordings in `data/raw/` and `ingest/testdata/` are OpenSky data and fall under the same terms.
+- **Basemap:** [OpenFreeMap](https://openfreemap.org/) tiles, © [OpenMapTiles](https://openmaptiles.org/) © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL).
+- **Terrain:** Copernicus DEM GLO-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; all rights reserved.
+- **Province boundaries:** [Natural Earth](https://www.naturalearthdata.com/) admin-1 (public domain).
+- **Airports:** [OurAirports](https://ourairports.com/data/) (public domain).
+- **Libraries:** MapLibre GL JS (BSD-3-Clause), terra-draw (MIT), HTMX (Zero-Clause BSD, vendored in `backend/ops/static/ops/`), and the Go, Python and npm dependencies pinned in `go.mod`, `requirements.txt` and `package-lock.json`.

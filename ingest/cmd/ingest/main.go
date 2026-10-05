@@ -51,6 +51,7 @@ func main() {
 
 	// HTTP first, so the container reports healthy while it waits for its dependencies
 	srv := newServer(mode)
+	srv.update(func(m *metrics) { m.DailyCredits = liveBudget(mode, cfg.DailyCredits) })
 	httpSrv := &http.Server{Addr: listenAddr, Handler: srv.routes(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Info("ingest listening", "addr", listenAddr, "mode", mode, "configured_mode", cfg.Mode)

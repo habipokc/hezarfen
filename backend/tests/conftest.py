@@ -20,6 +20,12 @@ def in_memory_channel_layer(settings):
     channel_layers.backends.clear()
 
 
+@pytest.fixture(autouse=True)
+def test_retention_key(settings):
+    """Retention runs record themselves in Redis; keep tests off the dev stack's record."""
+    settings.OPS_RETENTION_KEY = "test:ops:retention:last"
+
+
 @pytest.fixture
 def seed_airports(db):
     for ident, name, (lon, lat) in [

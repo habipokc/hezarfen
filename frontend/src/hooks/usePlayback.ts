@@ -7,6 +7,7 @@ import {
   type Timeline,
   advanceClock,
   buildTimeline,
+  firstFrameTs,
   playbackBucket,
   sampleAircraft,
   sampleAt,
@@ -31,6 +32,8 @@ export interface PlaybackWindow {
 }
 
 interface Loaded extends PlaybackWindow {
+  /** first recorded frame; playback starts and rewinds here */
+  first: number
   bucket: number
   timeline: Timeline
   fixes: number
@@ -78,8 +81,9 @@ export function usePlayback(
         const timeline = buildTimeline(body.frames)
         let fixes = 0
         for (const samples of timeline.values()) fixes += samples.length
-        clockRef.current = { t: body.start, playing: false }
-        setLoaded({ start: body.start, end: body.end, bucket: body.bucket, timeline, fixes })
+        const first = firstFrameTs(body.start, body.frames)
+        clockRef.current = { t: first, playing: false }
+        setLoaded({ start: body.start, end: body.end, first, bucket: body.bucket, timeline, fixes })
         setError(null)
       })
       .catch((e: unknown) => {
@@ -165,7 +169,7 @@ export function usePlayback(
         const c = clockRef.current
         if (!loaded) return
         // pressing play at the end starts over
-        const t = !c.playing && c.t >= loaded.end ? loaded.start : c.t
+        const t = !c.playing && c.t >= loaded.end ? loaded.first : c.t
         clockRef.current = { t, playing: !c.playing }
         drawRef.current?.()
       },

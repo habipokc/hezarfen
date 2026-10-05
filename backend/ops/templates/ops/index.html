@@ -1,0 +1,21 @@
+{% extends "ops/base.html" %}
+{% block content %}
+<div class="grid">
+  {% include "ops/_ingest.html" %}
+  {% include "ops/_retention.html" %}
+  <section id="geofences" class="card wide">
+    <header class="card-head"><h2>Geofences</h2><span class="muted">{{ geofences|length }} zones</span></header>
+    {% if geofences %}
+    <table>
+      <thead><tr><th>Name</th><th>Kind</th><th>State</th><th></th></tr></thead>
+      <tbody>
+        {% for fence in geofences %}{% include "ops/_geofence_row.html" %}{% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No geofences. <code>make seed</code> adds the airport zones; draw more on the live map.</p>
+    {% endif %}
+  </section>
+  {% include "ops/_events.html" %}
+</div>
+{% endblock %}

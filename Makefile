@@ -9,7 +9,7 @@ DEV_RUN  = $(COMPOSE) run --rm --no-deps
 
 .DEFAULT_GOAL := help
 .PHONY: help env dirs up up-prod down clean logs ps test test-backend test-ingest test-frontend \
-        lint lint-backend lint-ingest lint-frontend seed prune ws ui-smoke dem record superuser shell-backend psql
+        lint lint-backend lint-ingest lint-frontend lint-ci seed prune ws smoke ui-smoke dem record superuser shell-backend psql
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -65,6 +65,12 @@ lint-ingest:
 lint-frontend:
 	$(DEV_RUN) frontend sh -c 'npm run typecheck && npm run lint'
 
+ACTIONLINT_IMAGE ?= rhysd/actionlint:1.7.12
+SHELLCHECK_IMAGE ?= koalaman/shellcheck:stable
+lint-ci: ## Lint the GitHub Actions workflow (actionlint) and shell scripts (shellcheck)
+	docker run --rm -v "$(CURDIR):/repo" -w /repo $(ACTIONLINT_IMAGE) -color
+	docker run --rm -v "$(CURDIR):/mnt" -w /mnt $(SHELLCHECK_IMAGE) scripts/*.sh backend/docker/*.sh
+
 # One-off backend container with the scripts and data dirs mounted. It runs as the host
 # user so downloads in data/ are not root-owned.
 SEED_RUN = $(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
@@ -75,11 +81,14 @@ seed: env dirs ## Load airports + provinces (ogr2ogr) and seed geofences (REFERE
 	    && REFERENCE_OFFLINE=$(REFERENCE_OFFLINE) sh /scripts/load_reference_data.sh \
 	    && python manage.py seed_geofences'
 
-prune: ## Delete position history older than POSITIONS_RETENTION_DAYS
+prune: ## Delete position history older than POSITIONS_RETENTION_DAYS now (the maintenance service also does it hourly)
 	$(COMPOSE) exec backend python manage.py prune_positions
 
 ws: ## Tail /ws/live/ through nginx (make ws args="--seconds 60 --bbox 28.5,40.8,29.5,41.4")
 	$(COMPOSE) exec backend python manage.py ws_tail $(args)
+
+smoke: ## curl checks of the running stack through nginx (health, live data, seed, terrain, /ops)
+	BASE=http://localhost:$(or $(HEZARFEN_HTTP_PORT),8800) sh scripts/smoke_http.sh
 
 UI_SMOKE_IMAGE ?= mcr.microsoft.com/playwright:v1.63.0-noble
 ui-smoke: dirs ## Headless-browser check of the live map on localhost (screenshots in data/ui-smoke)

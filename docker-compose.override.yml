@@ -29,6 +29,14 @@ services:
     # restart the long-running worker whenever a Python file changes
     command: ["watchfiles", "--filter", "python", "python manage.py relay", "/app"]
 
+  maintenance:
+    image: hezarfen-maintenance:dev
+    build:
+      target: dev
+    volumes:
+      - ./backend:/app
+    command: ["watchfiles", "--filter", "python", "python manage.py maintenance", "/app"]
+
   ingest:
     image: hezarfen-ingest:dev
     build:

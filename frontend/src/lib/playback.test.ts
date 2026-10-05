@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   advanceClock,
   buildTimeline,
+  firstFrameTs,
   lerpAngle,
   playbackBucket,
   sampleAircraft,
@@ -161,5 +162,18 @@ describe('sampleAircraft', () => {
     expect(sampleAircraft(timeline, 'a', 5, 10)?.icao24).toBe('a')
     expect(sampleAircraft(timeline, 'b', 5, 10)).toBeNull()
     expect(sampleAircraft(timeline, 'a', 50, 10)).toBeNull()
+  })
+})
+
+describe('firstFrameTs', () => {
+  const frame = (ts: number) => ({ ts, aircraft: [] })
+  it('starts at the first recorded frame, skipping an empty stretch at the start of the window', () => {
+    expect(firstFrameTs(1000, [frame(4000), frame(3000), frame(5000)])).toBe(3000)
+  })
+  it('never starts before the window', () => {
+    expect(firstFrameTs(1000, [frame(990)])).toBe(1000)
+  })
+  it('falls back to the window start without frames', () => {
+    expect(firstFrameTs(1000, [])).toBe(1000)
   })
 })

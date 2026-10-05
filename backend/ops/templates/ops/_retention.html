@@ -1,0 +1,22 @@
+{% load ops_tags humanize %}
+<section id="retention" class="card">
+  <header class="card-head"><h2>Retention</h2><span class="muted">positions table</span></header>
+  <dl class="stats">
+    <div><dt>Keep</dt><dd>{{ retention_days }} days</dd></div>
+    <div><dt>Automatic run</dt><dd>every {{ retention_interval|age }}</dd></div>
+    <div><dt>Rows (estimate)</dt><dd>{% if positions.estimate is None %}not analysed yet{% else %}~{{ positions.estimate|intcomma }}{% endif %}</dd></div>
+    <div><dt>Oldest row</dt><dd>{% if positions.oldest %}{{ positions.oldest|ago:now }} old{% else %}—{% endif %}</dd></div>
+  </dl>
+  <p class="last-run">Last run:
+    {% if last_run %}{{ last_run.at|ago:now }} ago ({{ last_run.trigger }}), deleted {{ last_run.deleted|intcomma }} in {{ last_run.seconds }} s
+    {% else %}never{% endif %}
+  </p>
+  {% if result %}
+  <p class="flash" role="status">Deleted {{ result.deleted|intcomma }} positions older than {{ result.days }} days in {{ result.seconds|floatformat:2 }} s.</p>
+  {% endif %}
+  <button type="button" class="danger"
+          hx-post="{% url 'ops:retention' %}" hx-target="#retention" hx-swap="outerHTML"
+          hx-confirm="Delete positions older than {{ retention_days }} days now?" hx-disabled-elt="this">
+    Run retention now
+  </button>
+</section>

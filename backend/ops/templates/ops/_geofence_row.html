@@ -1,0 +1,14 @@
+<tr id="fence-{{ fence.id }}"{% if not fence.active %} class="is-inactive"{% endif %}>
+  <td>{{ fence.name }}</td>
+  <td class="muted">{{ fence.kind }}</td>
+  <td><span class="pill {% if fence.active %}pill-on{% else %}pill-off{% endif %}">{% if fence.active %}active{% else %}inactive{% endif %}</span></td>
+  <td class="actions">
+    {# an explicit target state, not a toggle: repeating the request is harmless #}
+    <button type="button"
+            hx-post="{% url 'ops:geofence-active' fence.id %}"
+            hx-vals='{"active": "{% if fence.active %}false{% else %}true{% endif %}"}'
+            hx-target="closest tr" hx-swap="outerHTML" hx-disabled-elt="this">
+      {% if fence.active %}Deactivate{% else %}Activate{% endif %}
+    </button>
+  </td>
+</tr>

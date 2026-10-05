@@ -6,6 +6,7 @@ from django.contrib.gis.geos import MultiPolygon, Point, Polygon
 from django.core.management import call_command
 
 from geofencing.models import Geofence, GeofenceEvent
+from ops.ingest import ingest_status
 from tracking import api as tracking_api
 
 pytestmark = pytest.mark.django_db
@@ -88,11 +89,11 @@ def test_stats(api, make_aircraft, monkeypatch):
 
 def test_ingest_status():
     now = datetime.now(UTC)
-    assert tracking_api.ingest_status(None) == "unreachable"
-    assert tracking_api.ingest_status({"last_poll_at": None}) == "starting"
+    assert ingest_status(None, now) == "unreachable"
+    assert ingest_status({"last_poll_at": None}, now) == "starting"
     # Go marshals nanoseconds; Python's fromisoformat must cope
     old = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.123456789Z")
-    assert tracking_api.ingest_status({"last_poll_at": old}) == "stale"
+    assert ingest_status({"last_poll_at": old}, now) == "stale"
 
 
 def test_stats_without_ingest(api, settings):

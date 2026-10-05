@@ -704,3 +704,101 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** `nginx/nginx.conf` tek dosya olarak bağlı. Dosyayı yeni bir inode ile yazan editörler veya araçlar sonrası `nginx -s reload` yetmiyor; `docker compose restart nginx` gerekiyor.
 - **Neden:** Tek dosya bind mount'u container başlarken inode'a bağlanıyor. Bu fazda `meta.json` kuralı reload ile gelmedi.
 - **Alternatif:** Klasör bağlamak (`./nginx:/etc/nginx/conf.d`); Faz 8'de değerlendirilebilir.
+
+## D-083 — Ops paneli kimlik doğrulamasız, CSRF açık
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `/ops/` herkese açık; REST API ile aynı politika (yerel, tek kullanıcılı kurulum). Ama ops POST'ları Django'nun CSRF kontrolünden geçiyor: sayfa token'ı `<body hx-headers='{"X-CSRFToken": …}'>` ile her HTMX isteğine ekliyor; token'sız POST 403.
+- **Neden:** Panel API'nin zaten verdiği yetkilerin ötesine geçmiyor: bölge açıp kapama `PATCH /api/geofences/` ile aynı, retention düğmesi yalnızca politika gereği zaten silinecek veriyi siliyor. CSRF ise farklı bir risk: başka bir sitenin, kullanıcının tarayıcısı üzerinden bu panele form göndermesini engelliyor ve maliyeti tek satır. (DRF tarafında kimlik doğrulama sınıfı olmadığı için CSRF orada devre dışı; D-039.)
+- **Alternatif:** `staff_member_required` ile admin oturumu istemek. Gerçek bir kurulumda ilk yapılacak iş; demo ve smoke testleri için sürtünme ekliyordu.
+
+## D-084 — Retention zamanlaması: ayrı `maintenance` servisi, basit döngü
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `manage.py maintenance` ayrı bir compose servisi olarak (backend imajı) çalışıyor. `ops/schedule.py::run_every` başlangıçtan 30 sn sonra ve sonra `RETENTION_INTERVAL_SECONDS`'ta (varsayılan 3600) bir `prune_positions` çalıştırıyor. Bekleme `threading.Event.wait(timeout)` ile: SIGTERM bir saat beklemeden döngüyü bitiriyor. Hatalı bir tur loglanıyor, döngü sürüyor. Healthcheck: her turdan sonra dokunulan heartbeat dosyası, `maintenance --check` yaşını aralığa göre değerlendiriyor.
+- **Neden:** Plan "relay ya da ayrı görev" diyordu. Relay tüm ORM çağrılarını tek bir thread'de (`sync_to_async(thread_sensitive=True)`) çalıştırıyor; çok saniyelik bir DELETE o sırada geofence kontrollerini bekletirdi. Ayrı servis ~60 MB bellek, karşılığında izolasyon ve ayrı log.
+- **Alternatif:** cron container'ı (bir araç ve log yönlendirmesi daha), Celery beat (broker, worker, beat: üç parça bir iş için), `pg_cron` (PostGIS imajına eklenti kurmak gerekirdi), relay içinde asyncio görevi (yukarıdaki thread sorunu).
+
+## D-085 — Retention toplu (batch) siliyor
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `DELETE FROM positions WHERE id IN (SELECT id FROM positions WHERE ts < %s LIMIT 20000)` döngüsü; her parti kendi transaction'ı (autocommit). Sonuç `PruneResult(deleted, days, cutoff, seconds, batches)`. Komut, servis ve ops düğmesi aynı fonksiyonu kullanıyor.
+- **Neden:** Tek bir `DELETE … WHERE ts < cutoff` bir günlük veride milyonlarca satırı tek transaction'da siler: kilitler ve WAL boyunca tutulur, replikasyon ve autovacuum geride kalır. Postgres'te `DELETE … LIMIT` yok, alt sorgu bu yüzden. İç SELECT `ts` üzerindeki BRIN index'iyle eski blokları buluyor. Önceki `QuerySet.delete()` tek ifadeydi.
+- **Alternatif:** `positions`'ı zamana göre bölümlemek (partitioning) ve eski bölümü `DROP` etmek: silme anlık, VACUUM yok. Doğru uzun vadeli çözüm, ama migration ve ingest'in insert yolunu değiştiriyor; `learn/99`'da "sonraki adım" olarak yazıldı.
+
+## D-086 — Ops düğmeleri "toggle" değil, açık hedef durum gönderiyor
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `POST /ops/geofences/{id}/active` gövdesinde `active=true|false` zorunlu (başka değer 400). Durum zaten istenen gibiyse hiçbir şey yazılmıyor ve `geofences.changed` yayınlanmıyor. Dönen `<tr>` bir sonraki düğmenin hedefini taşıyor.
+- **Neden:** Toggle idempotent değil: çift tık, tekrar denenen istek ya da eski sekmeden gelen tık durumu geri çevirir. Açık hedef durumla aynı isteği iki kez göndermek zararsız. HTMX'te bu `hx-vals='{"active": "false"}'` kadar ucuz.
+- **Alternatif:** `POST …/toggle`; daha kısa ama yarış koşullarına açık.
+
+## D-087 — HTMX 2.0.11 vendor'landı; polling kuralları
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `htmx.min.js` 2.0.11 (Zero-Clause BSD, 52 kB) `backend/ops/static/ops/` altında repoda; Django static ve WhiteNoise sunuyor. Kendini yenileyen bölümler `hx-trigger="every 5s [document.visibilityState === 'visible']"` ve `hx-swap="outerHTML"`; parça şablonu polling yapan elemanın kendisi, yani tetikleyiciyi her yanıtta yeniden taşıyor. Tam sayfa da aynı parça şablonlarını `{% include %}` ediyor. Başarısız isteklerde (`htmx:sendError`, `htmx:responseError`) üstte bir uyarı bandı çıkıyor, sonraki başarılı swap'ta kayboluyor.
+- **Neden:** CDN yok: panel çevrimdışı da çalışmalı ve CSP'de dış kaynak gerekmesin. 4.0 hâlâ `next` etiketinde; kararlı sürüm 2.0.11. Görünürlük filtresi arka plan sekmelerinin her 5 sn'de sorgu atmasını engelliyor. HTMX hata yanıtında swap yapmıyor; uyarı olmadan bayat sayılar güncel gibi görünürdü.
+- **Alternatif:** SSE ya da WebSocket ile itme (HTMX'in `sse` uzantısı). 5 sn'lik bir operasyon tablosu için polling daha basit ve durumsuz.
+
+## D-088 — Pozisyon tablosu özeti tam tarama yapmadan
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** Retention bölümündeki satır sayısı `pg_class.reltuples` tahmini (ANALYZE'dan; hiç analiz edilmediyse "not analysed yet"). En eski satır `ORDER BY id LIMIT 1` ile birincil anahtardan.
+- **Neden:** On milyonlarca satırda `COUNT(*)` ve `MIN(ts)` saniyeler sürer; BRIN index'i MIN sorusuna cevap veremez (blok aralığı özeti, sıralı yapı değil). Tablo yalnızca ekleme alıyor; en küçük id en eski ekleme.
+- **Alternatif:** `ts` üzerinde B-tree index (MIN anlık olurdu ama sıcak insert yoluna ikinci bir index yükü).
+
+## D-089 — Ingest `/metrics`'e `daily_credits` (ICD 1.6)
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** IF-8'e `daily_credits` eklendi: live modda yapılandırılmış günlük bütçe, diğer modlarda `null`. Ops paneli kalan krediyi yüzde olarak gösteriyor.
+- **Neden:** Bütçe (4000 / 400 / `OPENSKY_DAILY_CREDITS`) ingest'in kimlik bilgisi olup olmamasına bağlı; backend bunu bilmiyor. Bilgiyi bilen servisin yayınlaması doğru. Eklemeli değişiklik, sürüm kırılmıyor.
+- **Alternatif:** Backend'de aynı kuralı yeniden kurmak (iki yerde aynı mantık, ayrışma riski).
+
+## D-090 — CI tamamlandı: entegrasyon ve yığın job'ları
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `integration` job'ı: PostGIS + Redis servisleri, Django migrate, ardından Go store/publish testleri; `--- SKIP` görülürse job başarısız (D-034 kapandı). `frontend` job'ına `npm run build`. Eski `images` job'ı `stack` oldu: tüm imajları (`--profile tools` dahil) build ediyor, `make up-prod`, `make seed REFERENCE_OFFLINE=1`, `make smoke`; hata olursa servis logları. Workflow yerelde `make lint-ci` (actionlint 1.7.12 + shellcheck, container'da) ile doğrulandı; her job'ın komutları yerelde container'larda çalıştırıldı.
+- **Neden:** Atlanan bir test geçen bir test gibi görünür; SKIP kontrolü bunu yakalıyor. Yığın job'ı kullanıcının yaptığını tekrarlıyor: "build oluyor" ile "ayağa kalkıp çalışıyor" ayrı şeyler.
+- **Alternatif:** `act` ile workflow'u yerelde koşturmak: Docker soketi ve büyük runner imajı ister, servis container'ları desteği kısmi; GitHub'a geçince ilk gerçek koşu zaten görülecek. UI smoke'u (Playwright) CI'a eklemek: 2 GB imaj ve zamanlamaya bağlı adımlar (gerçek bir sınır geçişi beklemek) CI'da kırılgan olurdu.
+
+## D-091 — nginx klasör olarak bağlandı; `absolute_redirect off`
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `./nginx:/etc/nginx/conf.d:ro` (D-082'nin çözümü; `sed -i` ile inode değiştiren düzenlemeden sonra `nginx -s reload` yeni ayarı aldı). `/ops` → `/ops/` yönlendirmesi nginx'te; `absolute_redirect off` ile `Location: /ops/`.
+- **Neden:** Klasör bağlamada container dizini izliyor, dosyanın yeni inode'u görünüyor. `/ops` eğik çizgisiz gelince `^/(api|admin|ops|static)/` eşleşmiyor ve SPA'ya düşüyordu. nginx mutlak yönlendirmede kendi portunu (80) yazar; tarayıcı 8800'den geliyor.
+- **Alternatif:** Konum regex'ini `(/|$)` yapmak ve yönlendirmeyi Django'nun `APPEND_SLASH`'ine bırakmak (bir istek fazladan backend'e gider).
+
+## D-092 — terra-draw tembel yükleniyor
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `useDrawPolygon` terra-draw'ı ve MapLibre adaptörünü harita hazır olunca dinamik `import()` ile yüklüyor; yüklenene kadar "Draw a zone" düğmesi pasif. Ana paket 357 → 262 kB (gzip 107 → 84 kB); terra-draw kendi parçasında (46 kB gzip).
+- **Neden:** Faz 6'dan kalan not. İlk boyamayı geciktiren kod, kullanıcıların çoğunun hiç basmadığı bir düğmeye aitti.
+- **Alternatif:** Düğmeye basınca yüklemek (ilk tıklamada gecikme ve "yükleniyor" durumu gerekirdi).
+
+## D-093 — Son retention çalışması Redis'te
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** Her çalışma `ops:retention:last` anahtarına JSON yazıyor (zaman, tetikleyen, silinen, süre); yazma ve okuma en iyi çaba (Redis yoksa panel "never" gösterir, silme yine yapılmıştır). Testler `test:ops:retention:last` anahtarını kullanıyor (conftest otomatik fixture), çünkü test süreci geliştirme yığınının Redis'ine bağlı.
+- **Neden:** Tek bir "son durum" kaydı için migration'lı bir tablo fazla. Kaybolması zararsız: bir sonraki tur yeniden yazar.
+- **Alternatif:** `retention_runs` tablosu (geçmişiyle birlikte; denetim izi gerekirse doğru yer).
+
+## D-094 — PostGIS healthcheck'i TCP üzerinden
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `db` healthcheck'i `pg_isready -h 127.0.0.1 …` (compose ve CI servis container'ları).
+- **Neden:** Temiz clone denemesinde `make up` başarısız oldu: backend'in ilk `migrate`'i "connection refused" alıp çıktı, `--wait` "unhealthy" dedi. postgres imajı boş volume'da init betiklerini (PostGIS eklentisi) yalnızca unix soketinden dinleyen geçici bir sunucuyla çalıştırıyor, sonra sunucuyu yeniden başlatıyor. Soketi soran `pg_isready` bu geçici sunucuya "hazır" diyordu. Geçici sunucu TCP dinlemediği için TCP kontrolü gerçek sunucuyu bekliyor. Hata yalnızca ilk kurulumda görünüyordu, yani geliştirme sırasında hiç görülmemişti; CI'daki taze servis container'ları da aynı riski taşıyordu.
+- **Alternatif:** Backend başlangıcında migrate'i tekrar denemek (belirtiyi gizler, sebebi bırakır).
+
+## D-095 — Geçmiş oynatma ilk veri karesinden başlıyor
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** `firstFrameTs` (saf, testli): oynatma ve sona gelince geri sarma pencerenin başı yerine ilk kaydedilmiş karede. Kaydırıcı aralığı tüm pencere olarak kalıyor.
+- **Neden:** Temiz clone'da smoke'un "history aircraft on the map" adımı 0 uçak gördü: yığın 5 dakikalıktı, bir saatlik pencerenin ilk 55 dakikası boştu ve oynatma boşluktan başlıyordu. Kullanıcı da aynı şeyi görürdü: oynat düğmesine basıp boş bir harita.
+- **Alternatif:** Pencereyi veriye göre daraltmak (kaydırıcı ölçeği değişir, "son 1 saat" seçimi anlamını kaybeder).
+
+## D-096 — Temiz clone kontrolü ayrı proje adı ve portlarla
+
+- **Tarih:** 2026-10-05 (Faz 8)
+- **Karar:** Commit'lenecek ağaç (`git ls-files -co --exclude-standard`) scratch dizinine kopyalandı; `.env`'de portlar 8801/55433/56380, komutlar `COMPOSE="docker compose -p hezarfen-clean"` ile çalıştı: `make up`, `make seed`, `make smoke`, `make test`, `make dem DEM_SOURCE=synthetic`, `make ui-smoke`. Bitince `down -v`.
+- **Neden:** `-p` compose dosyasındaki `name:`'i ezer; ayrı proje adı ayrı volume (boş veritabanı) ve ayrı container demek. Çalışan geliştirme yığınına ve verisine dokunmadan "ilk kez kuran biri" senaryosu. Bu kontrol iki gerçek hata buldu (D-094, D-095) ve bir smoke hatası (sentetik DEM'de checkbox etiketi).
+- **Alternatif:** Ana yığını `make clean` ile silip yeniden kurmak (geliştirme verisi kaybolur, iki yığın yan yana denenemez).

@@ -8,6 +8,8 @@ interface Props {
   zones: GeofenceFeature[]
   error: string | null
   draw: DrawState
+  /** false until the drawing library has loaded */
+  canDraw: boolean
   onStartDraw: () => void
   onCancelDraw: () => void
   onSave: (name: string, ring: LonLat[]) => Promise<string | null>
@@ -54,12 +56,12 @@ function SaveForm({ ring, onSave, onCancel }: { ring: LonLat[]; onSave: Props['o
   )
 }
 
-export function GeofencePanel({ zones, error, draw, onStartDraw, onCancelDraw, onSave, onToggle, onDelete }: Props) {
+export function GeofencePanel({ zones, error, draw, canDraw, onStartDraw, onCancelDraw, onSave, onToggle, onDelete }: Props) {
   return (
     <section className="card" aria-label="Zones">
       <h3>Zones</h3>
       {draw.status === 'idle' && (
-        <button type="button" className="button" onClick={onStartDraw}>
+        <button type="button" className="button" onClick={onStartDraw} disabled={!canDraw}>
           Draw a zone
         </button>
       )}

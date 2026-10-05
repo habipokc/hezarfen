@@ -33,6 +33,7 @@ fetch() {
     [ -s "$CACHE/$2" ] && { log "using cached $2"; return 0; }
     mkdir -p "$CACHE"
     log "downloading $1"
+    # shellcheck disable=SC2015 # intended: a failing mv must clean up as well
     curl -fsSL --retry 2 --connect-timeout 15 -o "$CACHE/$2.part" "$1" \
         && mv "$CACHE/$2.part" "$CACHE/$2" \
         || { rm -f "$CACHE/$2.part"; log "download failed: $1"; return 1; }
@@ -59,6 +60,7 @@ AIRPORT_TYPES="type IN ('large_airport', 'medium_airport', 'small_airport')"
 load_airports() {
     if fetch "$AIRPORTS_URL" airports.csv; then
         # CSV has no geometry: build points from the lon/lat columns and declare their CRS
+        # shellcheck disable=SC2086 # $SPAT is four numbers, split into four arguments on purpose
         to_stage stage_airports "$CACHE/airports.csv" \
             -oo X_POSSIBLE_NAMES=longitude_deg -oo Y_POSSIBLE_NAMES=latitude_deg \
             -oo AUTODETECT_TYPE=YES -a_srs EPSG:4326 -nlt POINT \
@@ -67,6 +69,7 @@ load_airports() {
         rm -f "$CACHE/airports.csv"
     fi
     log "airports: falling back to scripts/fixtures/airports.geojson"
+    # shellcheck disable=SC2086 # as above
     to_stage stage_airports "$FIXTURES/airports.geojson" -nlt POINT \
         -select "$AIRPORT_FIELDS" -where "$AIRPORT_TYPES" -spat $SPAT
     check_stage stage_airports 5

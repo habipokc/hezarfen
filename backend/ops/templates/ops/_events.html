@@ -1,0 +1,23 @@
+{% load ops_tags %}
+<section id="events" class="card wide"
+         hx-get="{% url 'ops:events' %}" hx-trigger="every 5s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+  <header class="card-head"><h2>Geofence events</h2><span class="muted">latest {{ event_rows }} · every 5 s</span></header>
+  {% if events %}
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Age</th><th>Event</th><th>Aircraft</th><th>Zone</th></tr></thead>
+    <tbody>
+      {% for e in events %}
+      <tr class="event event-{{ e.event }}">
+        <td class="num">{{ e.ts|date:"H:i:s" }}</td>
+        <td class="num muted">{{ e.ts|ago:now }}</td>
+        <td><span class="pill pill-{{ e.event }}">{{ e.event }}</span></td>
+        <td>{% if e.callsign %}{{ e.callsign }} <span class="muted">{{ e.icao24 }}</span>{% else %}{{ e.icao24 }}{% endif %}</td>
+        <td>{{ e.geofence.name }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No geofence events yet.</p>
+  {% endif %}
+</section>

@@ -3,8 +3,7 @@
 import json
 import logging
 import time
-import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib.gis.db.models.functions import Distance, GeometryDistance
@@ -23,6 +22,7 @@ from geofencing.models import GeofenceEvent
 from hezarfen.api.errors import ApiError
 from hezarfen.api.fields import UnixTimeField
 from hezarfen.api.params import parse_bbox, parse_int, parse_unix
+from ops.ingest import fetch_ingest_metrics, ingest_status
 from reference.models import Airport, province_at
 
 from .models import Aircraft, AircraftLatest
@@ -242,25 +242,6 @@ class PlaybackView(APIView):
         return Response({"start": start, "end": end, "bucket": bucket, "frames": frames})
 
 
-def fetch_ingest_metrics() -> dict | None:
-    try:
-        with urllib.request.urlopen(settings.INGEST_METRICS_URL, timeout=1) as resp:
-            return json.load(resp)
-    except (OSError, ValueError) as exc:
-        log.warning("ingest metrics unavailable: %s", exc)
-        return None
-
-
-def ingest_status(metrics: dict | None) -> str:
-    if metrics is None:
-        return "unreachable"
-    last = metrics.get("last_poll_at")
-    if not last:
-        return "starting"
-    age = datetime.now(UTC) - datetime.fromisoformat(last)
-    return "ok" if age.total_seconds() <= settings.LIVE_WINDOW_SECONDS else "stale"
-
-
 class StatsView(APIView):
     @extend_schema(
         summary="Active aircraft, recent geofence events and ingest status",
@@ -289,6 +270,6 @@ class StatsView(APIView):
                 "events_last_hour": GeofenceEvent.objects.filter(
                     ts__gte=timezone.now() - timedelta(hours=1)
                 ).count(),
-                "ingest": {"status": ingest_status(metrics), "metrics": metrics},
+                "ingest": {"status": ingest_status(metrics, timezone.now()), "metrics": metrics},
             }
         )

@@ -1,0 +1,24 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Hezarfen ops{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'ops/ops.css' %}">
+  <script src="{% static 'ops/htmx.min.js' %}" defer></script>
+  <script src="{% static 'ops/ops.js' %}" defer></script>
+</head>
+{# every HTMX request from this page carries the CSRF token Django checks on POST #}
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <header class="top">
+    <h1>Hezarfen <span>ops</span></h1>
+    <nav>
+      <a href="/">Live map</a>
+      <a href="/api/docs/">API docs</a>
+      <a href="/admin/">Admin</a>
+    </nav>
+  </header>
+  <p id="offline" class="banner" role="alert" hidden></p>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

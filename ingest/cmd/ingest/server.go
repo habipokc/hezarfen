@@ -7,17 +7,20 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/habipokc/hezarfen/ingest/internal/config"
 )
 
 const listenAddr = ":8080"
 
 // metrics is the JSON document served on /metrics (ICD IF-8). The first six fields
-// are the Phase 0 contract; the rest were added in ICD 1.2.
+// are the Phase 0 contract; the rest were added in ICD 1.2, daily_credits in 1.6.
 type metrics struct {
 	Mode          string         `json:"mode"`
 	StartedAt     time.Time      `json:"started_at"`
 	LastPollAt    *time.Time     `json:"last_poll_at"`
 	Credits       *int           `json:"credits_remaining"`
+	DailyCredits  *int           `json:"daily_credits"`
 	BatchSize     int            `json:"last_batch_size"`
 	ErrorCount    int64          `json:"error_count"`
 	Cycles        int64          `json:"cycles"`
@@ -31,6 +34,14 @@ type metrics struct {
 type server struct {
 	mu sync.Mutex
 	m  metrics
+}
+
+// liveBudget is the daily OpenSky credit budget to report: only live mode spends credits.
+func liveBudget(mode string, daily int) *int {
+	if mode != config.ModeLive {
+		return nil
+	}
+	return &daily
 }
 
 func newServer(mode string) *server {

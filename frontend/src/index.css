@@ -88,6 +88,20 @@ body {
   letter-spacing: 0.02em;
 }
 
+.ops-link {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.ops-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .sheet-handle {
   display: none;
 }
@@ -137,6 +151,12 @@ body {
     background: none;
     border: none;
     cursor: pointer;
+  }
+
+  /* above the full-header handle, or a tap would toggle the sheet instead */
+  .ops-link {
+    position: relative;
+    z-index: 1;
   }
 
   .sheet-handle::before {

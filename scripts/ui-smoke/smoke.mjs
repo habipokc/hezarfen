@@ -87,7 +87,8 @@ const tileResponse = (page) =>
     .then(() => true, () => false)
 
 async function terrainChecks(page, devMap) {
-  const toggle = page.getByLabel('Hillshade', { exact: true })
+  // the label reads "Hillshade synthetic" when make dem fell back to the synthetic surface
+  const toggle = page.getByRole('checkbox', { name: /^Hillshade( synthetic)?$/ })
   const ready = await toggle.isEnabled().catch(() => false)
   check(ready, 'hillshade layer available (tiles from make dem)')
   if (!ready) return
@@ -260,7 +261,62 @@ async function zoneChecks(page, frames) {
   await page.close()
 }
 
+// ---- ops panel (Django templates + HTMX) --------------------------------------------
+async function opsChecks(page) {
+  const fragments = { ingest: 0, events: 0 }
+  page.on('response', (r) => {
+    const m = /\/ops\/(ingest|events)$/.exec(new URL(r.url()).pathname)
+    if (m && r.status() === 200 && r.request().headers()['hx-request'] === 'true') fragments[m[1]]++
+  })
+  await page.goto(BASE)
+  await page.waitForSelector('.status-live', { timeout: 30_000 })
+  await Promise.all([page.waitForURL('**/ops/'), page.click('a.ops-link')])
+  check(new URL(page.url()).pathname === '/ops/', 'map → ops link opens /ops/')
+  check((await page.textContent('#ingest .status')).trim() === 'ok', 'ops: ingest status ok')
+  const stamp = await page.textContent('#ingest .updated')
+  await page.waitForTimeout(11_000)
+  check(fragments.ingest >= 2 && fragments.events >= 2, `ops: ingest and events poll every 5 s (${fragments.ingest}/${fragments.events} in 11 s)`)
+  check((await page.textContent('#ingest .updated')) !== stamp, 'ops: polled fragment replaced in place')
+  check((await page.$$('#events tr.event')).length > 0, 'ops: geofence events listed')
+
+  // geofence switch: two clicks, state checked through the REST API both times
+  const row = await page.$('#geofences tbody tr')
+  const id = (await row.getAttribute('id')).replace('fence-', '')
+  const api = async () => (await (await page.request.get(new URL(`/api/geofences/${id}/`, BASE).href)).json()).properties.active
+  const initial = await api()
+  await page.click(`#fence-${id} button`)
+  await page.waitForFunction(
+    ([id, want]) => document.querySelector(`#fence-${id} .pill`)?.textContent === want,
+    [id, initial ? 'inactive' : 'active'],
+  )
+  check((await api()) === !initial, `ops: geofence ${id} switched (hx-post, row swapped)`)
+  await page.click(`#fence-${id} button`)
+  await page.waitForFunction(
+    ([id, want]) => document.querySelector(`#fence-${id} .pill`)?.textContent === want,
+    [id, initial ? 'active' : 'inactive'],
+  )
+  check((await api()) === initial, `ops: geofence ${id} switched back`)
+
+  // retention: hx-confirm opens a native dialog, which Playwright dismisses unless told
+  page.once('dialog', (d) => d.accept())
+  await page.click('#retention button')
+  const flash = await page.waitForSelector('#retention .flash', { timeout: 30_000 }).then((el) => el.textContent(), () => null)
+  check(flash !== null && /Deleted [\d,]+ positions/.test(flash), `ops: retention runs on demand (${flash?.trim()})`)
+  check((await page.textContent('#retention .last-run')).includes('manual'), 'ops: last run recorded as manual')
+  await page.screenshot({ path: `${OUT}/ops.png` })
+}
+
+{
+  log('ops 1280×800')
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  const { errors } = watch(page)
+  await opsChecks(page)
+  check(errors.length === 0, `no console errors ${errors.length ? JSON.stringify(errors) : ''}`)
+  await page.close()
+}
+
 // ---- mobile ----------------------------------------------------------------------
+
 {
   log('mobile 375×812')
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
@@ -293,6 +349,11 @@ async function zoneChecks(page, frames) {
   await page.waitForTimeout(300)
   const after = (await page.getAttribute('.panel', 'class')).includes('expanded')
   check(before !== after, 'handle toggles the sheet')
+  await page.goto(new URL('/ops/', BASE).href)
+  await page.waitForSelector('#events')
+  const [opsScroll, opsClient] = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth])
+  check(opsScroll <= opsClient, `ops: no horizontal overflow at 375 px (${opsScroll} ≤ ${opsClient})`)
+  await page.screenshot({ path: `${OUT}/mobile-ops.png` })
   check(errors.length === 0, `no console errors ${errors.length ? JSON.stringify(errors) : ''}`)
 }
 

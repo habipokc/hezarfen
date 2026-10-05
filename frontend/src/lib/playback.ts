@@ -38,6 +38,14 @@ export function playbackBucket(windowSeconds: number): number {
   return Math.min(600, Math.max(5, raw))
 }
 
+/** Where playback starts: the first recorded frame, not an empty stretch at the window's start
+ * (a window reaching back before the stack was running). */
+export function firstFrameTs(windowStart: number, frames: PlaybackFrame[]): number {
+  let first = Infinity
+  for (const frame of frames) first = Math.min(first, frame.ts)
+  return Number.isFinite(first) ? Math.max(first, windowStart) : windowStart
+}
+
 export function buildTimeline(frames: PlaybackFrame[]): Timeline {
   const timeline: Timeline = new Map()
   for (const frame of frames) {

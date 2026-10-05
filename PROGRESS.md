@@ -13,8 +13,8 @@
 | 4 — Gerçek zamanlı katman | ✅ Tamamlandı (tag `phase-4`) |
 | 5 — Frontend çekirdeği | ✅ Tamamlandı (tag `phase-5`) |
 | 6 — İz, playback, geofence çizimi | ✅ Tamamlandı (tag `phase-6`) |
-| 7 — Raster / DEM | ✅ Tamamlandı (tag `phase-7`) — onay bekleniyor |
-| 8 — HTMX ops, CI, teslim | ⏳ |
+| 7 — Raster / DEM | ✅ Tamamlandı (tag `phase-7`) |
+| 8 — HTMX ops, CI, teslim | ✅ Tamamlandı (tag `phase-8`) — onay bekleniyor |
 
 ## Faz 0 — İskelet, altyapı ve sözleşme (2026-10-05)
 
@@ -366,6 +366,54 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-7.md`.
 - Karolar nginx'te 7 gün önbellekli; `make dem` yeniden çalıştırılırsa tarayıcı eski karoları gösterebilir (sert yenileme gerekir).
 - `nginx.conf` tek dosya bind mount: inode değiştiren düzenlemelerden sonra `nginx -s reload` yetmiyor, `docker compose restart nginx` gerekiyor (D-082).
 
+## Faz 8 — HTMX ops paneli, kalite ve teslim (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-8.md`.
+
+**Tamamlananlar**
+
+- `/ops/` paneli (Django şablonları + HTMX 2.0.11, repoda vendor'lı):
+  - Ingest kartı: mod, son döngü, aralık, kalan kredi (live modda bütçenin yüzdesi), batch, yeni pozisyon, hata, kural başına reddedilen kayıt, canlı uçak, son bir saatin olayları. Beş saniyede bir, yalnızca sekme görünürken yenileniyor.
+  - Son 50 geofence olayı (beş saniyede bir).
+  - Geofence aç/kapa düğmeleri: açık hedef durum (`active=true|false`), toggle değil; değişince `geofences.changed` (D-086).
+  - Retention: tahmini satır sayısı, en eski satır, son çalışma, onaylı "Run retention now" düğmesi (D-088).
+  - CSRF token `hx-headers` ile; başarısız isteklerde uyarı bandı. Giriş yok, REST API gibi (D-083, D-087).
+- Retention: `tracking/retention.py` 20.000 satırlık partilerle siliyor (100 bin satır 5 partide 0,63 sn); son çalışma Redis'te (`ops:retention:last`) (D-085, D-093). Yeni `maintenance` servisi saatte bir çalıştırıyor (`ops/schedule.py::run_every`, heartbeat healthcheck) (D-084).
+- Ingest `/metrics`'e `daily_credits` (ICD 1.6, D-089).
+- CI: `integration` job'ı (Django migrate + Go store/publish testleri, SKIP'te başarısız; D-034 kapandı), frontend build, `stack` job'ı (bütün imajlar + `make up-prod` + offline seed + `make smoke`). `make lint-ci` (actionlint + shellcheck) temiz (D-090).
+- `scripts/smoke_http.sh` + `make smoke` (16 curl kontrolü).
+- nginx: klasör olarak bağlı (D-082 çözüldü), `/ops` → `/ops/`, `absolute_redirect off` (D-091).
+- PostGIS healthcheck TCP üzerinden: boş volume'da ilk `make up` hatası düzeldi (D-094).
+- Geçmiş oynatma ilk veri karesinden başlıyor (D-095).
+- terra-draw tembel yükleniyor: ana paket 107 → 84 kB gzip (D-092). SPA başlığında "Ops" bağlantısı.
+- Testler: pytest 158 → 208 (zamanlayıcı, ingest özeti, retention, bakım komutu, ops view'ları, CSRF). vitest 94 → 97. Go'ya `daily_credits` testi. `make ui-smoke` 36 → 47 (ops paneli: polling, bölge düğmesi REST ile doğrulanarak, retention, 375 px).
+- Dokümanlar: README baştan (ekran görüntüleri `docs/screenshots/`, mimari, hızlı başlangıç, ops, test/CI, veri kaynakları ve atıflar), `docs/DEMO.md`, ICD 1.6 (§7.5 IF-10), ARCHITECTURE (ops/maintenance, CI), DECISIONS D-083…D-096, `.env.example` (`RETENTION_INTERVAL_SECONDS`).
+- Learn: `13-htmx-test-ve-cicd.md` (3.300 kelime), `99-genel-bakis-ve-mulakat.md` (2.700 kelime); `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- `/ops/` paneli: ingest durumu, kendini yenileyen olay tablosu, geofence düğmeleri, manuel retention (pytest + ui-smoke, dev ve prod).
+- `prune_positions` periyodik çalışıyor (`maintenance` servisi; ilk tur başlangıçtan 30 sn sonra).
+- CI tamamlandı: her job'ın komutları yerelde container'larda geçti, workflow actionlint'ten geçti. GitHub'da henüz koşmadı (remote yok).
+- README ve `docs/DEMO.md` yazıldı.
+- Temiz clone: commit'lenecek ağaç scratch'e kopyalandı, `-p hezarfen-clean` ve 8801 portuyla `make up`, `make seed`, `make smoke` (16/16), `make test`, `make dem DEM_SOURCE=synthetic`, `make ui-smoke` (47/47) geçti. Bu deneme D-094 ve D-095'i ve bir smoke hatasını buldu (D-096).
+- `make test`, `make lint`, `make lint-ci` temiz; `make up-prod` + smoke + ui-smoke geçti; dev yığını geri açık.
+
+**Sapmalar**
+
+- Retention relay yerine ayrı `maintenance` servisinde (plan iki seçeneği de sunuyordu).
+- Eski `images` CI job'ı, yığını da kaldıran `stack` job'ına dönüştü.
+- Plan dışı ekler: `daily_credits` metriği, `make smoke`, `make lint-ci`, terra-draw tembel yükleme, geçmişin ilk kareden başlaması, PostGIS healthcheck düzeltmesi.
+
+**Bilinen sorunlar / notlar**
+
+- CI workflow'u gerçek bir GitHub runner'ında hiç koşmadı; ilk push'ta küçük farklar çıkabilir (ör. runner'daki apt paketleri).
+- Ops panelinde giriş yok; yerel kullanım içindir. Geofence listesi kendini yenilemiyor (başka yerden yapılan değişiklik için sayfayı yenile).
+- Prod'dan dev'e geçerken `make up` bu fazda bir kez daha hata verdi, tekrarında düzeldi; D-094'le açıklanmıyor (volume doluydu), yeniden üretilemedi.
+- Retention büyük tablolarda partili silme yapıyor; asıl ölçeklenebilir çözüm zamana göre partitioning (yapılmadı).
+- Geçmiş penceresinin başı veri yoksa kaydırıcıda boş görünüyor; oynatma ilk kareden başlıyor.
+- Önceki fazların notları geçerli: AGL'de geoid düzeltmesi yok, sentetik uçaklar araziyi bilmiyor, karolar 7 gün önbellekli.
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 7 onayı. Ardından Faz 8 (HTMX ops paneli, retention döngüsü, CI'ı tamamlama, README ve `docs/DEMO.md`, temiz clone'dan `make up` kontrolü) → `learn/13-htmx-test-ve-cicd.md` ve `learn/99-genel-bakis-ve-mulakat.md`.
+Proje sahibinin Faz 8 onayı. PLAN'daki bütün fazlar tamamlandı. Olası devam işleri (onay gerekir): GitHub'a taşıma ve CI'ın ilk gerçek koşusu (remote ekleme ve push sahibine sorulacak), `positions` partitioning, vector tile (Martin/pg_tileserv), Prometheus metrikleri.

@@ -143,6 +143,7 @@ export function App() {
           zones={geofences.zones}
           error={geofences.error}
           draw={draw.state}
+          canDraw={draw.loaded}
           onStartDraw={draw.start}
           onCancelDraw={draw.reset}
           onSave={saveZone}

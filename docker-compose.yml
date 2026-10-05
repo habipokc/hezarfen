@@ -36,7 +36,10 @@ services:
     ports:
       - "127.0.0.1:${HEZARFEN_DB_PORT:-55432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # over TCP, not the unix socket: on a fresh volume the image runs its init scripts on a
+      # socket-only temporary server, then restarts; a socket check reports healthy too early
+      # and the backend's first migrate hits "connection refused" (DECISIONS D-094)
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -100,6 +103,28 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # position retention every RETENTION_INTERVAL_SECONDS (`manage.py maintenance`)
+  maintenance:
+    build:
+      context: ./backend
+      target: prod
+    <<: *default-env
+    environment:
+      <<: *db-env
+      DJANGO_ROLE: maintenance
+    command: ["python", "manage.py", "maintenance"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # heartbeat file touched after every run; the allowed age follows the interval
+      test: ["CMD", "python", "manage.py", "maintenance", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
   ingest:
     build:
       context: ./ingest
@@ -141,7 +166,9 @@ services:
   nginx:
     image: nginx:1.30-alpine
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # the folder, not the file: a single-file mount pins the inode, so editors that save
+      # by replacing the file left nginx reading the old config (DECISIONS D-082)
+      - ./nginx:/etc/nginx/conf.d:ro
       - ./data/tiles:/srv/tiles:ro
     ports:
       - "${HEZARFEN_HTTP_PORT:-8800}:80"

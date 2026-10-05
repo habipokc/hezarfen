@@ -1,0 +1,31 @@
+{% load ops_tags %}
+{# polled: the response replaces this whole element, attributes included #}
+<section id="ingest" class="card"
+         hx-get="{% url 'ops:ingest' %}" hx-trigger="every 5s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+  <header class="card-head">
+    <h2>Ingest</h2>
+    <span class="status status-{{ ingest.status }}">{{ ingest.status }}</span>
+  </header>
+  {% if ingest.status == "unreachable" %}
+  <p class="muted">ingest:8080/metrics is not answering. Check <code>make logs s=ingest</code>.</p>
+  {% else %}
+  <dl class="stats">
+    <div><dt>Mode</dt><dd>{{ ingest.mode }}</dd></div>
+    <div><dt>Last cycle</dt><dd>{% if ingest.last_poll_age is None %}not yet{% else %}{{ ingest.last_poll_age|age }} ago{% endif %}</dd></div>
+    <div><dt>Interval</dt><dd>{% if ingest.poll_interval %}{{ ingest.poll_interval }} s{% else %}—{% endif %}</dd></div>
+    <div><dt>Credits left</dt><dd>{% if ingest.credits is None %}—{% else %}{{ ingest.credits }}{% if ingest.credits_pct is not None %} ({{ ingest.credits_pct }}%){% endif %}{% endif %}</dd></div>
+    <div><dt>Last batch</dt><dd>{{ ingest.batch_size|default_if_none:"—" }} aircraft</dd></div>
+    <div><dt>New positions</dt><dd>{{ ingest.inserted|default_if_none:"—" }}</dd></div>
+    <div><dt>Cycles</dt><dd>{{ ingest.cycles|default_if_none:"—" }}</dd></div>
+    <div><dt>Errors</dt><dd{% if ingest.errors %} class="warn"{% endif %}>{{ ingest.errors|default_if_none:"—" }}</dd></div>
+    <div><dt>Uptime</dt><dd>{{ ingest.uptime|age }}</dd></div>
+    <div><dt>Live aircraft</dt><dd>{{ active_aircraft }}</dd></div>
+    <div><dt>Relay subscribers</dt><dd>{{ ingest.subscribers|default_if_none:"—" }}</dd></div>
+    <div><dt>Events, last hour</dt><dd>{{ events_last_hour }}</dd></div>
+  </dl>
+  <p class="rejected">
+    Rejected records: <strong>{{ ingest.rejected_total }}</strong>{% for rule, count in ingest.rejected %}{% if forloop.first %} —{% endif %} <span class="tag">{{ rule }} {{ count }}</span>{% endfor %}
+  </p>
+  {% endif %}
+  <p class="updated">Updated {% now "H:i:s" %} UTC · every 5 s</p>
+</section>

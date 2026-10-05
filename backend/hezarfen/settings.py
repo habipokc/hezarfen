@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
     "django.contrib.gis",
     "django.contrib.postgres",
     "channels",
@@ -85,6 +86,9 @@ DATABASES = {
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 POSITIONS_RETENTION_DAYS = int(os.environ.get("POSITIONS_RETENTION_DAYS", "7"))
+# How often the maintenance service runs retention, and where the last run is recorded
+RETENTION_INTERVAL_SECONDS = int(os.environ.get("RETENTION_INTERVAL_SECONDS", "3600"))
+OPS_RETENTION_KEY = "ops:retention:last"
 
 # Region of interest, same variables as ingest: [minLon, minLat, maxLon, maxLat]
 REGION_BBOX = (

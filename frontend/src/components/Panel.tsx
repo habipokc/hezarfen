@@ -16,6 +16,10 @@ export function Panel({ status, expanded, onToggle, children }: Props) {
           <span className="sr-only">{expanded ? 'Collapse panel' : 'Expand panel'}</span>
         </button>
         <h1>Hezarfen</h1>
+        {/* server-rendered ops panel (Django + HTMX), a separate page on purpose */}
+        <a className="ops-link" href="/ops/">
+          Ops
+        </a>
         {status}
       </header>
       <div id="panel-body" className="panel-body">

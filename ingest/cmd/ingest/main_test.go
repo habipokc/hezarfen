@@ -65,3 +65,30 @@ func TestUnknownMethodRejected(t *testing.T) {
 		t.Errorf("status = %d, want 405", resp.StatusCode)
 	}
 }
+
+func TestDailyCreditsOnlyInLiveMode(t *testing.T) {
+	if got := liveBudget("live", 4000); got == nil || *got != 4000 {
+		t.Errorf("live: got %v, want 4000", got)
+	}
+	for _, mode := range []string{"replay", "synthetic"} {
+		if got := liveBudget(mode, 4000); got != nil {
+			t.Errorf("%s: got %v, want nil (no OpenSky credits are spent)", mode, *got)
+		}
+	}
+
+	s := newServer("synthetic")
+	ts := httptest.NewServer(s.routes())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := got["daily_credits"]; !ok || v != nil {
+		t.Errorf("daily_credits = %v (present=%v), want null", v, ok)
+	}
+}
