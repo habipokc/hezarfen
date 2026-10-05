@@ -175,3 +175,88 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** PLAN §5'teki retention komutu modellerle birlikte Faz 1'de yazıldı (`make prune`). Zamanlanmış çalıştırma (cron) henüz yok.
 - **Neden:** Komut yalnızca `positions` modeline bağlı ve test edilmesi kolay. Zamanlama Faz 8'deki ops işleriyle birlikte ele alınacak.
 - **Alternatif:** Faz 2'de ingest ile birlikte yazmak.
+
+## D-025 — Ingest container'ı host kullanıcısıyla çalışır
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `ingest` servisi hem prod'da hem dev'de `user: "${HEZARFEN_UID:-1000}:${HEZARFEN_GID:-1000}"` ile çalışır; Makefile `id -u`/`id -g` değerlerini export eder. Dev imajında `HOME=/tmp`, `GOCACHE=/tmp/go-cache` ve `/go` herkese yazılabilir. Go cache volume'ları yeni adlarla (`go-mod`, `go-cache`) açıldı.
+- **Neden:** Faz 0'dan kalan sorun: distroless `nonroot` (uid 65532) bind mount edilen `./data/raw`'a yazamıyordu; dev container root olduğu için de `go.mod` ve raw kayıtlar root'a ait oluyordu. Host uid'si ile her iki sorun birden çözülüyor.
+- **Alternatif:** `data/raw`'ı named volume yapmak (kayıtlar host'tan zor erişilir) ya da dosyaları sonradan `chown` etmek.
+
+## D-026 — Dev imajlarına ayrı `:dev` etiketi
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `docker-compose.override.yml` dev imajlarına `hezarfen-<servis>:dev` etiketi veriyor (relay için ayrı `hezarfen-relay:dev`).
+- **Neden:** Faz 0'dan kalan gizli bir hata: dev ve prod target'ları aynı varsayılan etiketi (`hezarfen-ingest`) paylaşıyordu. `make up-prod` sonrası `make test-ingest` distroless prod imajında çalıştı; imaj `sh -c` argümanlarını yok saydı ve ingest'i sonsuza kadar başlattı (test "takıldı"). relay ile backend aynı etiketi paralel build edince de "already exists" hatası çıkıyor, bu yüzden relay'in etiketi ayrı.
+- **Alternatif:** Her dev komutundan önce `--build` (yavaş ve kırılgan).
+
+## D-027 — Ingest paket yapısı: `clean` paketi ve `source.Frame`
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** PLAN'daki `internal/{config,opensky,source,store,publish,geo}`'ya ETL'in "clean" adımı için `internal/clean` eklendi. Kaynaklar ortak `Source` interface'iyle (`Name`, `Next(ctx) (Frame, error)`) `Frame` döndürür: snapshot + `Retime` + `Restart` + `Credits`. Null alanlar `sql.Null*` yerine pointer.
+- **Neden:** Temizleme kuralları hem kaynak hem depodan bağımsız, saf ve TDD'ye en uygun parça. Pointer'lar JSON `null`'ı doğrudan karşılıyor ve pgx dizilerinde `NULL` olarak gidiyor; `sql.Null*` hem JSON hem dizi tarafında ek dönüşüm isterdi.
+- **Alternatif:** Kuralları `source` veya `store` içine gömmek.
+
+## D-028 — Toplu yazım: `unnest` dizileri, tek transaction, yazma hatasında da yayın
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** Her döngü tek transaction. `aircraft` → `aircraft_latest` → `positions` sırasıyla, her tablo için tek `INSERT … SELECT FROM unnest($1::text[], …)` ifadesi; üçü tek `pgx.Batch` ile tek ağ turunda gider. `aircraft_latest` yalnızca daha yeni `ts` ile güncellenir; `aircraft` güncellemesinde null gelen callsign eskisini silmez. Veritabanı yazımı başarısız olsa bile Redis'e yayın yapılır.
+- **Neden:** `COPY` en hızlısı ama `ON CONFLICT` yapamaz (staging tablo gerekir); 60–100 satırlık batch'te `unnest` farkı ölçülemez ve idempotency'yi korur. Canlı harita tarihçe tablosundaki bir sorun yüzünden donmamalı; relay zaten yeniden başlarken PostGIS'ten okur.
+- **Alternatif:** `COPY` + geçici tablo + `INSERT … SELECT`; satır başına `INSERT`.
+
+## D-029 — Replay: kayıt zamanında temizle, sonra duvar saatine taşı
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** Replay, kayıtları dosya adına göre (`YYYY-MM-DD/HHMMSS.json.gz`, alt dizinler dahil) sıralar, aralıkları `REPLAY_SPEED`'e bölerek bekler ve sonsuz döngüde oynatır. Temizleme kayıttaki zamanlar üzerinde çalışır; kabul edilen kayıtlar `Retime` ile duvar saatine taşınır. 60 sn'den uzun boşluklar (ayrı kayıt oturumları) beklenmez, yeni segment başlar. Döngü başa sardığında `Restart` ile jump filtresi sıfırlanır. Kaynak dizin `REPLAY_DIR` (varsayılan `$DATA_DIR/raw`).
+- **Neden:** Zaman kaydırılmazsa eski `ts`'ler "son 60 sn" penceresine hiç girmez. Zamanı hızla birlikte sıkıştırıp sonra temizlemek ise 5× hızda 250 m/s'lik uçağı 1.250 m/s gösterir ve jump filtresi her şeyi atar.
+- **Alternatif:** Orijinal zamanlarla yayınlamak (downstream bozulur); hız çarpanını jump eşiğine yansıtmak (fiziksel anlamı kaybolur).
+
+## D-030 — Jump filtresi ayrıntıları
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** Hız, uçağın son *kabul edilen* fix'ine göre hesaplanır; reddedilen fix çapayı taşımaz. Aynı çapaya karşı 3 ardışık red olursa çapa hatalı sayılır ve yeni fix kabul edilir (loglanır). Aynı veya daha eski `ts`'de kontrol yapılmaz (OpenSky son konumu tekrarlar; veritabanı `ON CONFLICT` ile eler). 10 dakika görülmeyen uçağın çapası unutulur.
+- **Neden:** Tek bir hatalı ilk fix, çapa hiç güncellenmezse uçağın bütün izini sonsuza kadar reddettirir.
+- **Alternatif:** Medyan/Kalman tabanlı filtre (bu proje için fazla).
+
+## D-031 — Sentetik trafik modeli
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** İrtifa, süreye değil uçulan mesafeye bağlı: `min(seyir, s·0,08, (D−s)·tan3°)`. Seyir irtifası, profilin tepe noktasının %85'i (en fazla 10.800 m, 300 m katı), böylece kısa bacaklarda da düz bir seyir bölümü kalıyor. Hız irtifaya bağlı (75 → 128 → 230 m/s). Uçuşların %75'i LTFM/LTFJ'ye gidip geliyor; %20'si bölgeyi kenardan kenara geçen yabancı overflight. İnişten sonra 60–180 sn park. Havalimanları DB'den (large/medium, bbox içi), DB boşsa gömülü listeden. Varsayılan `SYNTHETIC_SEED=1`.
+- **Neden:** Mesafe tabanlı profil, her rota uzunluğunda tırmanış ile alçalmanın sığmasını garanti ediyor. Hub ağırlığı geofence uyarılarını test edilebilir kılıyor (testte 30 dakikada ≥10 uçak). Sabit seed sayesinde her hot reload tabloya 60 yeni uçak eklemiyor.
+- **Alternatif:** Zamana bağlı faz makinesi (kısa rotalarda tırmanış bitmeden alçalma gerekir); rastgele seed (tablo şişer).
+
+## D-032 — Live mod: anonim erişime izin, adaptive eşik, raw zone
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `SOURCE_MODE=live` credential olmadan da çalışır (anonim, uyarı loglanır); `auto` ise yalnızca credential varsa live seçer. Adaptive eşik `OPENSKY_DAILY_CREDITS`'in %20'si (varsayılan 4.000 ya da anonimde 400). 429'da kaynak `Retry-After` kadar bekleyip tekrar dener; 5xx ve ağ hatalarında istemci 1-2-4 sn backoff ile 3 kez dener. Token süresi dolmadan 60 sn önce yenilenir ve 401'de bir kez yenilenir. Raw dosyalar duvar saatine (UTC) göre adlandırılır, geçici dosyaya yazılıp `rename` edilir, izinleri 0644.
+- **Neden:** Anonim live, credential gelmeden gerçek veriyi denemeyi sağlıyor. Atomik yazım, aynı dizini okuyan replay'in yarım dosya görmemesi için.
+- **Not:** 10 sn'lik poll günde 8.640 istek eder; 4.000 kredi yaklaşık 11 saat yeter, adaptive moddan sonra 30 sn'lik aralıkla yaklaşık 6,7 saat daha. Sürekli canlı yayın için `POLL_INTERVAL_SECONDS=20` önerisi README'de.
+- **Alternatif:** Live için credential zorunluluğu.
+
+## D-033 — Gerçek OpenSky fixture'ı repoda
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `make record` (`scripts/record_fixture.sh`) ile anonim erişimle 25 snapshot (10 sn arayla, yaklaşık 80 uçak, toplam ~110 KB) alındı ve `ingest/testdata/opensky/2026-10-05/` altına commit'lendi. Parser ve replay testleri bu kaydı kullanıyor.
+- **Neden:** PLAN §4: ağ varsa küçük bir gerçek kayıt. Gerçek veri, sentetikte olmayan durumları (stale konumlar, kategori 0, yerdeki uçaklar) içeriyor: kayıtta konumların yaklaşık %12'si 15 sn'den eski.
+- **Alternatif:** Sentetik çıktıdan fixture üretmek (ağ olmasaydı yedek yol buydu).
+
+## D-034 — Go store/publish entegrasyon testleri geçici şemada
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `store` testleri `INGEST_TEST_DATABASE_URL` varsa çalışır: geçici bir şema açar, tabloları `CREATE TABLE … (LIKE public.x INCLUDING ALL)` ile Django'nun migrate ettiği tablolardan kopyalar ve `search_path`'i o şemaya çevirir. `publish` testi `INGEST_TEST_REDIS_URL` ile ayrı bir kanalda (`test.positions.batch`) çalışır. `make test-ingest` iki değişkeni de verir; CI'daki Go job'ında yoktur ve testler atlanır.
+- **Neden:** Gerçek DDL'e (unique kısıt, identity, `db_default`) karşı test etmek gerekiyor, ama geliştirme verisine dokunmadan. Pub/sub kanalları Redis veritabanları arasında ortak olduğu için çalışan relay test mesajlarını görmemeli.
+- **Alternatif:** CI'da Go job'ına PostGIS ekleyip Django migrate çalıştırmak (Faz 8'de değerlendirilebilir).
+
+## D-035 — ICD 1.2: uçak başına `ts`, ek metrikler
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `positions.batch/v1` içindeki her uçağa konum zamanı `ts` eklendi; `/metrics`'e `cycles`, `poll_interval_seconds`, `last_positions_inserted`, `last_subscribers`, `rejected_total` eklendi. Şema sürümü değişmedi.
+- **Neden:** Gerçek veride konum zamanı, döngü zamanından 15 sn'ye kadar geride olabilir; relay'in (Faz 4) doğru "son görülme" hesaplaması için gerekli. Alan eklemek ICD §9'a göre geriye uyumlu.
+- **Alternatif:** Relay'in envelope `ts`'ini kullanması (15 sn'ye kadar hata).
+
+## D-036 — `/healthz` döngü tazeliğine bağlı değil
+
+- **Tarih:** 2026-10-05 (Faz 2)
+- **Karar:** `/healthz`, süreç ayakta olduğu sürece 200 döner. Döngü sağlığı `/metrics`'teki `last_poll_at` ve `error_count` ile izlenir (Faz 8 ops paneli).
+- **Neden:** Live modda 429 sonrası bekleme saatler sürebilir; healthcheck buna bağlansaydı Docker container'ı gereksiz yere "unhealthy" yapar, `restart` ile de kredi harcayan bir döngüye sokardı.
+- **Alternatif:** `last_poll_at`'e göre 503 dönmek.

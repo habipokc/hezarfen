@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.27-trixie AS dev
 RUN go install github.com/air-verse/air@v1.67.4
+# compose runs this container as the host user (so data/raw and go.mod edits are not
+# root-owned): every cache must be writable by an arbitrary uid without a home directory
+ENV HOME=/tmp GOCACHE=/tmp/go-cache
 WORKDIR /src
 COPY go.mod go.sum* ./
-RUN go mod download
+RUN go mod download && mkdir -p /tmp/go-cache && chmod -R a+rwX /go /tmp/go-cache
 # source is bind-mounted over /src by docker-compose.override.yml
 COPY . .
 EXPOSE 8080

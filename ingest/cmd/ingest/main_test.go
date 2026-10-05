@@ -5,12 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestHealthz(t *testing.T) {
-	s := &server{startedAt: time.Now(), mode: "synthetic"}
-	ts := httptest.NewServer(s.routes())
+	ts := httptest.NewServer(newServer("synthetic").routes())
 	defer ts.Close()
 
 	resp, err := http.Get(ts.URL + "/healthz")
@@ -23,8 +21,12 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestMetricsReportsMode(t *testing.T) {
-	s := &server{startedAt: time.Now(), mode: "replay"}
+func TestMetricsReportsModeAndUpdates(t *testing.T) {
+	s := newServer("replay")
+	s.update(func(m *metrics) {
+		m.BatchSize = 64
+		m.Rejected["stale"] += 3
+	})
 	ts := httptest.NewServer(s.routes())
 	defer ts.Close()
 
@@ -34,18 +36,24 @@ func TestMetricsReportsMode(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var got metrics
+	var got map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Mode != "replay" {
-		t.Errorf("mode = %q, want replay", got.Mode)
+	if got["mode"] != "replay" || got["last_batch_size"] != 64.0 {
+		t.Errorf("metrics = %v", got)
+	}
+	// ICD IF-8: unknown values are null until known
+	if v, ok := got["last_poll_at"]; !ok || v != nil {
+		t.Errorf("last_poll_at = %v (present=%v), want null", v, ok)
+	}
+	if got["rejected_total"].(map[string]any)["stale"] != 3.0 {
+		t.Errorf("rejected_total = %v", got["rejected_total"])
 	}
 }
 
 func TestUnknownMethodRejected(t *testing.T) {
-	s := &server{startedAt: time.Now(), mode: "auto"}
-	ts := httptest.NewServer(s.routes())
+	ts := httptest.NewServer(newServer("auto").routes())
 	defer ts.Close()
 
 	resp, err := http.Post(ts.URL+"/healthz", "application/json", nil)

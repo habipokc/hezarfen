@@ -94,9 +94,29 @@ flowchart LR
 
 Django apps: `tracking` (aircraft, aircraft_latest, positions), `reference` (airports, provinces), `geofencing` (geofences, geofence_events), `terrain` (Phase 7), `ops` (health, ops panel).
 
+## Ingest pipeline (Go)
+
+```mermaid
+flowchart LR
+    subgraph source["internal/source (one of)"]
+        L["Live<br/>opensky client, OAuth2,<br/>adaptive 10/30 s"]
+        R["Replay<br/>data/raw/*.json.gz,<br/>re-timed, × speed"]
+        S["Synthetic<br/>great-circle flights<br/>over geo"]
+    end
+    L -- raw response --> RAW[("data/raw<br/>raw zone")]
+    RAW -. recordings .-> R
+    source -- Frame --> C["internal/clean<br/>null pos · bbox · stale>15 s ·<br/>dup · jump>400 m/s"]
+    C -- records --> ST["internal/store<br/>1 tx, unnest batch"]
+    C -- records --> P["internal/publish<br/>positions.batch/v1"]
+    ST --> DB[("PostGIS")]
+    P --> RD[("Redis")]
+```
+
+`cmd/ingest` resolves the mode (`auto` → live / replay / synthetic), waits for PostGIS and Redis, then loops extract → clean → load until SIGTERM. Each cycle is one database transaction and one Redis message; failures are counted in `/metrics` and never stop the loop. The ingest container runs as the host uid so `data/raw` recordings belong to the developer.
+
 ## Environments
 
-- **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml`. Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).
+- **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml` (dev images tagged `:dev`, so they never overwrite the prod images). Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).
 - **Prod-like** (`make up-prod`): only `docker-compose.yml`. Images are built with `target: prod` (non-root backend, distroless Go binary, static frontend served by nginx).
 - **Isolation:** compose project `name: hezarfen`, no `container_name`. Host ports: 8800 (nginx), and 127.0.0.1-only 55432 (PostGIS) and 56379 (Redis) for debugging.
 

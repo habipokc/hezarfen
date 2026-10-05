@@ -102,6 +102,8 @@ services:
       context: ./ingest
       target: prod
     <<: *default-env
+    # host uid/gid (exported by the Makefile) so recordings in ./data/raw belong to you
+    user: "${HEZARFEN_UID:-1000}:${HEZARFEN_GID:-1000}"
     environment:
       <<: *db-env
       DATA_DIR: /data

@@ -1,9 +1,14 @@
 # Dev overrides (auto-loaded by `docker compose`): source is bind-mounted and every
 # service reloads on file save. The repo lives on WSL ext4, so inotify events reach
 # the containers and no watcher needs polling.
+#
+# Dev images get their own :dev tag. Without it the dev and prod targets share the
+# default tag (hezarfen-<service>), and building one silently replaces the other:
+# `make test` after `make up-prod` would run inside the distroless prod image.
 
 services:
   backend:
+    image: hezarfen-backend:dev
     build:
       target: dev
     volumes:
@@ -15,6 +20,8 @@ services:
       - python manage.py migrate --noinput && exec uvicorn hezarfen.asgi:application --host 0.0.0.0 --port 8000 --reload --reload-dir /app
 
   relay:
+    # same Dockerfile as backend; a tag of its own because two builds cannot export one tag in parallel
+    image: hezarfen-relay:dev
     build:
       target: dev
     volumes:
@@ -23,18 +30,20 @@ services:
     command: ["watchfiles", "--filter", "python", "python manage.py relay", "/app"]
 
   ingest:
+    image: hezarfen-ingest:dev
     build:
       target: dev
     volumes:
       - ./ingest:/src
       - ./data:/data
-      - go-mod-cache:/go/pkg/mod
-      - go-build-cache:/root/.cache/go-build
+      - go-mod:/go/pkg/mod
+      - go-cache:/tmp/go-cache
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       start_period: 60s
 
   frontend:
+    image: hezarfen-frontend:dev
     build:
       target: dev
     environment:
@@ -50,5 +59,6 @@ services:
       start_period: 30s
 
 volumes:
-  go-mod-cache:
-  go-build-cache:
+  # fresh names: the Phase 0 volumes were root-owned and the dev container now runs as the host uid
+  go-mod:
+  go-cache:

@@ -2,6 +2,9 @@
 # needs docker, make and git.
 
 COMPOSE ?= docker compose
+# ingest runs as the host user so files it writes under data/ (and go.mod in dev) are yours
+export HEZARFEN_UID ?= $(shell id -u)
+export HEZARFEN_GID ?= $(shell id -g)
 DEV_RUN  = $(COMPOSE) run --rm --no-deps
 
 .DEFAULT_GOAL := help
@@ -41,8 +44,10 @@ test-backend: ## pytest against the real PostGIS
 	$(COMPOSE) up -d --wait db redis
 	$(COMPOSE) run --rm backend pytest
 
-test-ingest: ## go test
-	$(DEV_RUN) ingest go test ./...
+test-ingest: ## go test (store/publish integration tests use the stack's db and redis)
+	$(COMPOSE) up -d --wait db redis
+	$(DEV_RUN) ingest sh -c 'INGEST_TEST_DATABASE_URL="postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:5432/$$POSTGRES_DB" \
+	    INGEST_TEST_REDIS_URL=redis://redis:6379/0 go test ./...'
 
 test-frontend: ## vitest
 	$(DEV_RUN) frontend npm test
@@ -76,8 +81,12 @@ prune: ## Delete position history older than POSITIONS_RETENTION_DAYS
 dem: ## Build DEM, hillshade tiles and COG (Phase 7)
 	@echo "dem: implemented in Phase 7"
 
-record: ## Record a small anonymous OpenSky fixture (Phase 2)
-	@echo "record: implemented in Phase 2"
+RECORD_DIR ?= ingest/testdata/opensky
+record: env ## Record anonymous OpenSky snapshots (COUNT=25 INTERVAL=10 RECORD_DIR=ingest/testdata/opensky)
+	@mkdir -p $(RECORD_DIR)
+	$(COMPOSE) run --rm --no-deps --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	    -e COUNT=$(or $(COUNT),25) -e INTERVAL=$(or $(INTERVAL),10) \
+	    -v "$(CURDIR)/scripts:/scripts:ro" -v "$(CURDIR)/$(RECORD_DIR):/out" backend sh /scripts/record_fixture.sh
 
 superuser: ## Create a Django admin user (interactive)
 	$(COMPOSE) exec backend python manage.py createsuperuser
