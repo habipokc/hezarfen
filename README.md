@@ -2,7 +2,7 @@
 
 Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
 
-> Status: **Phase 4 — real-time layer (WebSocket, relay, geofence events).** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **Phase 5 — live map (React + TypeScript + MapLibre).** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
 
 ## Stack
 
@@ -87,6 +87,22 @@ make ws args="--raw"                             # full JSON frames
 
 Geofence events are produced by the `relay` worker (`make logs s=relay`) and stored in `geofence_events` (`/api/geofence-events`).
 
+## Live map
+
+`http://localhost:8800/` is a React + TypeScript single-page app around a MapLibre GL JS map (basemap: OpenFreeMap `dark`, with an offline fallback style).
+
+- Aircraft icons rotate with their heading and are coloured by barometric altitude; aircraft on the ground are grey. Callsigns appear from zoom 8.
+- The page keeps one WebSocket open and re-subscribes with the viewport bbox (+10 %) after every pan or zoom, so only the visible area is streamed. It reconnects with exponential backoff; the status badge shows `Live`, `Connecting…` or the retry countdown.
+- Click an aircraft for details: live altitude, speed, heading and squawk from the socket, plus province and nearest airport from `GET /api/aircraft/{icao24}/`.
+- Provinces, airports, geofences and callsigns can be toggled. The panel lists recent geofence enter/exit events; clicking one flies to the aircraft.
+- Narrower than 640 px (phones), the side panel becomes a bottom sheet.
+
+```bash
+make ui-smoke    # headless Chromium (Playwright image) checks the map, the WebSocket frames and the 375 px layout
+```
+
+`make ui-smoke` writes screenshots to `data/ui-smoke/`. The first run pulls the ~2 GB Playwright image. In the dev server the map is exposed as `window.__map` for console debugging.
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, data flow, environments
@@ -97,3 +113,4 @@ Geofence events are produced by the `relay` worker (`make logs s=relay`) and sto
 
 - Airports: [OurAirports](https://ourairports.com/data/) (public domain)
 - Province boundaries: [Natural Earth](https://www.naturalearthdata.com/) admin-1 (public domain)
+- Basemap: [OpenFreeMap](https://openfreemap.org/) tiles, © [OpenMapTiles](https://openmaptiles.org/) © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors

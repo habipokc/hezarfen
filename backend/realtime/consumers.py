@@ -110,6 +110,10 @@ class LiveConsumer(AsyncWebsocketConsumer):
                     await self.send(dumps(payload))
         except asyncio.CancelledError:
             raise
+        except OSError:
+            # the client went away mid-send (uvicorn's ClientDisconnected is an OSError);
+            # websocket.disconnect follows and runs the cleanup
+            logger.debug("client %s gone while sending", self.channel_name)
         except Exception:
             logger.exception("sender failed for %s", self.channel_name)
             await self.close(code=1011)

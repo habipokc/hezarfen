@@ -9,7 +9,7 @@ DEV_RUN  = $(COMPOSE) run --rm --no-deps
 
 .DEFAULT_GOAL := help
 .PHONY: help env dirs up up-prod down clean logs ps test test-backend test-ingest test-frontend \
-        lint lint-backend lint-ingest lint-frontend seed prune ws dem record superuser shell-backend psql
+        lint lint-backend lint-ingest lint-frontend seed prune ws ui-smoke dem record superuser shell-backend psql
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -80,6 +80,14 @@ prune: ## Delete position history older than POSITIONS_RETENTION_DAYS
 
 ws: ## Tail /ws/live/ through nginx (make ws args="--seconds 60 --bbox 28.5,40.8,29.5,41.4")
 	$(COMPOSE) exec backend python manage.py ws_tail $(args)
+
+UI_SMOKE_IMAGE ?= mcr.microsoft.com/playwright:v1.63.0-noble
+ui-smoke: dirs ## Headless-browser check of the live map on localhost (screenshots in data/ui-smoke)
+	@mkdir -p data/ui-smoke
+	docker run --rm --network host --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	    -e BASE=http://localhost:$(or $(HEZARFEN_HTTP_PORT),8800)/ -e OUT=/out \
+	    -v "$(CURDIR)/scripts/ui-smoke:/src:ro" -v "$(CURDIR)/data/ui-smoke:/out" $(UI_SMOKE_IMAGE) \
+	    sh -c 'cp -r /src /tmp/ui && cd /tmp/ui && npm install --silent --no-audit --no-fund && node smoke.mjs'
 
 dem: ## Build DEM, hillshade tiles and COG (Phase 7)
 	@echo "dem: implemented in Phase 7"

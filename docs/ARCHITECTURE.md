@@ -154,6 +154,22 @@ flowchart LR
 
 The relay keeps its state in memory and rebuilds it from PostGIS on start (live aircraft, geofence names, last event per aircraft/fence pair), so Redis never has to retain anything. Each consumer's channel-layer handlers only write to its outbox; one sender task per socket awaits the network, so a slow client merges deltas instead of stalling anyone (ICD §6.4). Code: `backend/realtime/` (state, outbox, consumers, relay, queries) and `backend/geofencing/tracker.py`.
 
+## Frontend (React + MapLibre)
+
+```mermaid
+flowchart LR
+    WS["useLiveSocket<br/>one WebSocket · backoff · watchdog"] -->|"snapshot / delta"| ST["LiveStore<br/>Map&lt;icao24, Feature&gt;<br/>newest ts wins"]
+    ST -->|"throttle ≤ 1/s: setData"| SRC[("GeoJSON source aircraft<br/>promoteId icao24")]
+    SRC --> L1["symbol: SDF icon<br/>icon-rotate heading<br/>icon-color by altitude"] & L2["circle: hover / selected<br/>feature-state"] & L3["symbol: callsign, minzoom 8"]
+    MAP["MapLibre map<br/>(in a ref)"] -->|"moveend → bbox +10 %"| VB["useViewportBbox<br/>useSyncExternalStore"]
+    VB -->|subscribe| WS
+    WS -->|geofence_event| EV["event list"]
+    MAP -->|click| SEL["selected icao24"] -->|"GET /api/aircraft/{id}/ every 15 s"| DET["details panel"]
+    REF["/api/provinces · /api/airports · /api/geofences"] --> MAP
+```
+
+The MapLibre instance is created in an effect and kept in a ref; React state only holds what the panel renders (socket status, a redraw counter, the selected id, layer toggles, recent events). Live aircraft never go through React state: messages patch a plain `Map`, and the whole collection is handed to MapLibre with `setData` at most once per second. Pure logic (message parsing, store, bbox, altitude colours, backoff, throttle, formatting, basemap fallback, SDF generation) lives in `frontend/src/lib` and `frontend/src/map/sdf.ts` and is unit-tested with vitest.
+
 ## Environments
 
 - **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml` (dev images tagged `:dev`, so they never overwrite the prod images). Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).

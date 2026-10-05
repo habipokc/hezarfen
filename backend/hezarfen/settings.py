@@ -105,7 +105,9 @@ POSITIONS_CHANNEL = "positions.batch"
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [REDIS_URL]},
+        # redis-py 8 defaults socket_timeout to 5 s, exactly channels-redis' BZPOPMIN wait:
+        # an idle consumer's read timed out and dropped the socket. Must stay > 5 s.
+        "CONFIG": {"hosts": [{"address": REDIS_URL, "socket_timeout": 15}]},
     }
 }
 LIVE_GROUP = "live"

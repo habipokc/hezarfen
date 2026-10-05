@@ -1,0 +1,9 @@
+{
+  "name": "hezarfen-ui-smoke",
+  "private": true,
+  "type": "module",
+  "description": "Headless-browser acceptance check for the live map (run with `make ui-smoke`).",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

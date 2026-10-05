@@ -423,3 +423,121 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** Testlerde autouse fixture `InMemoryChannelLayer` kullanıyor. Consumer testleri tam ASGI uygulamasına (Origin doğrulayıcı dahil) `WebsocketCommunicator` ile bağlanıyor. Relay testleri gerçek PostGIS'e `transaction=True` ile gidiyor. Async testlerin iş parçacığında kalan DB bağlantısını bir fixture kapatıyor.
 - **Neden:** Deterministik ve hızlı; Redis layer'ın kendisi channels-redis'in sorumluluğu. Redis üzerinden uçtan uca yol smoke testte (`make ws`, dev ve prod) doğrulandı.
 - **Alternatif:** Testlerde gerçek Redis layer (ayrı prefix ve temizlik gerekirdi).
+
+## D-055 — Frontend sürümleri, yapı ve arayüz dili
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - maplibre-gl 6.12.0 (güncel kararlı; v6 yalnızca ESM, tipleri paketin içinde).
+  - Bağımlılık `npm install --package-lock-only` ile ekleniyor, ardından imaj yeniden kuruluyor. Konteynerdeki `node_modules` imajdan gelen root sahipli bir anonim volume.
+  - Kod `lib/` (saf, testli), `map/` (katman tanımları, ikon), `hooks/` ve `components/` olarak ayrıldı.
+  - Arayüz metinleri İngilizce (kod, README ve API ile aynı dil). Türkçe yalnızca learn ve proje günlüklerinde.
+- **Neden:** Saf mantık React'ten ve haritadan bağımsız olunca vitest ile node ortamında test edilebiliyor. Bağımlılıklar host'a kurulmuyor.
+- **Alternatif:** react-map-gl gibi bir sarmalayıcı. Learn hedefi gereği MapLibre'nin imperative API'si doğrudan kullanıldı.
+
+## D-056 — Basemap: OpenFreeMap `dark`, style JSON'u uygulama çekiyor, yedek style
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - Basemap `https://tiles.openfreemap.org/styles/dark`. Style JSON'u haritayı oluşturmadan önce `fetch` ile, 5 sn zaman aşımıyla çekiliyor.
+  - Ağ hatası, HTTP hatası ya da geçersiz style gelirse satır içi yedek style kullanılıyor: düz arka plan ve demotiles glyph'leri. Arayüzde "Basemap unavailable" notu gösteriliyor.
+  - Etiket fontu seçilen style'ın glyph sunucusuna göre belirleniyor (`Noto Sans Regular` / `Open Sans Semibold`).
+- **Neden:**
+  - Koyu zemin üzerinde renkli veri katmanları öne çıkıyor.
+  - MapLibre'ye URL verilirse ve yüklenemezse harita boş kalıyor, yalnızca bir `error` olayı geliyor. Önceden çekince karar haritadan önce verilebiliyor.
+  - Yedek style'da il sınırları ve uçaklar yine görünüyor.
+- **Alternatif:** `map.on('error')` ile sonradan `setStyle` (eklenen katmanlar yeniden kurulmak zorunda kalırdı); kendi tile sunucusu (kapsam dışı).
+
+## D-057 — Canlı katman: `Map<icao24, Feature>`, 1 sn throttle'lı `setData`, React'e yalnızca sürüm sayacı
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - `LiveStore` snapshot'ta tamamen yenileniyor, delta'da yamanıyor. Uçak başına en yeni `ts` kazanıyor; eşit `ts`'de sonraki mesaj kazanıyor (ICD §6.2).
+  - `setData` istemcide de en fazla saniyede bir çağrılıyor (leading + trailing throttle), çünkü snapshot ve delta art arda gelebiliyor.
+  - Uçak başına React state yok. Her çizimde bir `version` sayacı artıyor; sayı ve seçili uçağın canlı kaydı bu sayaca bağlı olarak türetiliyor.
+- **Neden:** Yüzlerce uçak için React state'i ve render ağacı gereksiz. Haritaya giden tek yol `setData`, React yalnızca paneldeki birkaç değeri çiziyor.
+- **Alternatif:** Uçakları React state'inde tutup her mesajda yeniden render etmek; `updateData` ile diff göndermek (MapLibre destekliyor, ama 1 sn'de yüz küsur nokta için tam `setData` yeterince ucuz, learn'de karşılaştırıldı).
+
+## D-058 — Uçak ikonu: canvas'ta üretilen SDF; vurgu için feature-state'li circle katmanı
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - Uçak silueti açılışta 64×64 canvas'a çiziliyor, kaba kuvvet bir signed distance field'e çevriliyor ve `addImage(..., { sdf: true, pixelRatio: 2 })` ile ekleniyor.
+  - Renk `icon-color` ile irtifaya göre (`interpolate`), yerdekiler gri, irtifası bilinmeyenler beyaz.
+  - Hover ve seçim, uçakların altındaki bir `circle` katmanının opaklığıyla gösteriliyor; bu opaklık `feature-state`'ten okunuyor (`promoteId: "icao24"`).
+- **Neden:**
+  - Asset hattı gerekmiyor. Gerçek SDF (yalnızca maske değil) her boyutta keskin kenar ve halo veriyor.
+  - `feature-state` yalnızca paint özelliklerini sürebiliyor, `icon-size` gibi layout özelliklerini süremiyor.
+- **Alternatif:** İrtifa bandı başına ayrı renkli PNG'ler (renk geçişi kaba olurdu); seçim için ayrı bir source (her seçimde `setData`).
+
+## D-059 — Subscribe bbox: viewport + %10 pay, 4 ondalık, aynısı tekrar gönderilmiyor
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - Viewport sınırları her yönde genişliğin/yüksekliğin %10'u kadar genişletiliyor, geçerli aralığa kırpılıyor ve 4 ondalığa yuvarlanıyor.
+  - Hesap yalnızca `moveend`'de yapılıyor. Değer `useSyncExternalStore` ile React'e bağlanıyor; değişmeyen bbox aynı dizi nesnesi olarak dönüyor.
+- **Neden:**
+  - Küçük kaydırmalarda kenardaki uçaklar zaten yüklü oluyor.
+  - Yuvarlama sayesinde kamera titreşimi yeni bir subscribe üretmiyor.
+  - Harita React dışında bir "store"; `useSyncExternalStore` bunun resmi bağlantı noktası.
+- **Alternatif:** `move` olayında (her karede) subscribe göndermek; paysız tam viewport.
+
+## D-060 — WebSocket yeniden bağlanma: full jitter backoff, snapshot'ta sıfırlama, watchdog
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - Gecikme `[0,5 sn, min(30 sn, 0,5·2ⁿ)]` aralığında rastgele.
+  - Deneme sayacı bağlantı açılınca değil, ilk snapshot gelince sıfırlanıyor.
+  - 45 sn hiç frame gelmezse (üç kaçırılmış heartbeat) soket kapatılıp yeniden bağlanılıyor.
+  - Tarayıcının `online` olayı bekleyen denemeyi hemen başlatıyor.
+  - Durumlar: `connecting`, `live`, `waiting` (geri sayımla).
+- **Neden:**
+  - Jitter, sunucu yeniden başladığında bütün sekmelerin aynı anda bağlanmasını engelliyor.
+  - "Kabul et ve hemen kapat" döngüsü de geri çekiliyor.
+  - Ölü bir TCP bağlantısı `close` olayı hiç üretmeyebiliyor.
+- **Alternatif:** Sabit aralıklı yeniden deneme; jittersiz üstel backoff.
+
+## D-061 — Responsive düzen: 640 px altında iki durumlu bottom sheet
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - Masaüstünde sağda 340 px yüzen panel. 640 px altında aynı bileşen alttan açılan panel oluyor: kapalıyken yalnızca başlık (durum ve uçak sayısı), açıkken en fazla ekranın %70'i.
+  - Bir uçak seçilince panel açılıyor. Sürükleme yok, başlığa dokunmak aç/kapa yapıyor.
+  - Hangi düzenin kullanılacağına CSS karar veriyor; JS'te ekran genişliği okunmuyor.
+- **Neden:** Tek bileşen, tek DOM. 375 px'de harita kullanılabilir alanın çoğunu koruyor.
+- **Alternatif:** Sürüklenebilir çok durumlu sheet (jest kodu ve erişilebilirlik yükü; Faz 8'e bırakılabilir).
+
+## D-062 — Bundle bölme, dev'de `window.__map`, tarayıcı smoke testi Playwright konteynerinde
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:**
+  - maplibre-gl ayrı bir chunk (yaklaşık 279 KB gzip), uygulama kodu ayrı (yaklaşık 75 KB gzip).
+  - Dev sunucusunda harita `window.__map` olarak açılıyor (konsoldan inceleme ve smoke test için; prod derlemesinde yok).
+  - Tarayıcı kabul testi `make ui-smoke`: resmi Playwright imajı `--network host` ile `localhost:8800`'e bağlanıyor. WebSocket frame'lerini kaydediyor, ekran görüntülerini `data/ui-smoke/`'a yazıyor.
+- **Neden:**
+  - maplibre uygulama kodundan çok daha seyrek değişiyor; ayrı chunk uzun süre önbellekte kalıyor.
+  - Kabul kriteri (yalnızca görünen bölgenin verisi geliyor) frame'lerden ölçülebiliyor.
+  - Host'a tarayıcı ya da Node kurulmuyor.
+- **Alternatif:** vitest ile jsdom üzerinde bileşen testi (WebGL yok, harita test edilemez); host'ta elle tarayıcı kontrolü (tekrarlanamaz).
+
+## D-063 — Channel layer'da `socket_timeout: 15` (redis-py 8 ile channels-redis uyumsuzluğu)
+
+- **Tarih:** 2026-10-05 (Faz 5, Faz 4 hatası)
+- **Karar:**
+  - `CHANNEL_LAYERS` host'u `{"address": REDIS_URL, "socket_timeout": 15}`.
+  - Bir test, socket zaman aşımının channels-redis'in `brpop_timeout` değerinden (5 sn) büyük kaldığını doğruluyor.
+  - Consumer'ın sender'ı gönderim sırasında istemci koparsa (`ClientDisconnected`, bir `OSError`) ERROR yerine debug logu yazıyor.
+- **Neden:**
+  - redis-py 8'de varsayılan `socket_timeout` 5 sn oldu. channels-redis kanalda 5 sn'lik `BZPOPMIN` ile bekliyor; istemci okuması, Redis'in boş yanıtıyla aynı anda zaman aşımına düşüyordu.
+  - Sonuç: kanalına 5 sn mesaj gelmeyen her consumer `TimeoutError` ile kapanıyordu. Faz 4'te deltalar 2 sn'de bir aktığı için görünmedi; haritası henüz yüklenmemiş (subscribe göndermemiş) bir tarayıcı sekmesi ortaya çıkardı.
+- **Alternatif:** redis-py'yi 7.x'e sabitlemek (eski sürüme bağlanmak); `socket_timeout: None` (ölü bir Redis hiç fark edilmezdi).
+
+## D-064 — maplibre worker'ı Vite paketliyor (`?worker&url` + `setWorkerUrl`)
+
+- **Tarih:** 2026-10-05 (Faz 5)
+- **Karar:** `src/map/worker.ts`, `maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url` ile worker'ı import ediyor ve URL'i harita oluşturulmadan önce `setWorkerUrl` ile veriyor. Worker formatı `es`.
+- **Neden:**
+  - maplibre-gl 6, worker URL'ini çalışma anında kendi modül URL'inden türetiyor; Vite bunu statik olarak göremiyor.
+  - Prod derlemesinde worker dosyası hiç üretilmiyordu. Dev'de de dep pre-bundling ana dosyayı worker'ın yanından taşıdığı için 404 alınıyordu.
+  - Worker paylaşılan bir chunk'tan import yaptığı için dosyayı olduğu gibi kopyalamak yetmiyor; Vite worker'ı bağımlılıklarıyla tek dosyada paketliyor. Dev ve prod aynı yolu kullanıyor.
+- **Alternatif:** `optimizeDeps.exclude` (yalnızca dev'i düzeltiyordu); worker'ı `public/`'e kopyalamak (sürüm yükseltmede elle güncellenmesi gerekirdi).

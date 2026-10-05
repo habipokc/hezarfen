@@ -233,6 +233,51 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-4.md`.
 - Bölge sınırında gidip gelen uçak için histerezis yok; sık enter/exit üretebilir.
 - Yere inip sinyali kesilen uçak için `exit` yazılmıyor (bilinçli, D-052); olay tablosunda kapanmamış `enter`'lar kalabilir.
 
+## Faz 5 — Frontend çekirdeği (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-5.md`.
+
+**Tamamlananlar**
+
+- maplibre-gl 6.12.0 (D-055). Arayüz İngilizce.
+- Harita: `useMapLibre` (instance ref'te), OpenFreeMap `dark` + zaman aşımlı yedek style (D-056), worker Vite ile paketleniyor (D-064).
+- Canlı uçak katmanı:
+  - `LiveStore` (`Map<icao24, Feature>`, en yeni `ts` kazanır), 1 sn throttle'lı `setData`, React'e yalnızca `version` sayacı (D-057).
+  - Canvas'ta üretilen SDF ikon; `icon-rotate` + `icon-rotation-alignment: map`; irtifaya göre `interpolate` renk, yerdekiler gri.
+  - `promoteId` + `feature-state` ile hover/seçim halkası (D-058); callsign etiketi zoom ≥ 8.
+- `useLiveSocket`: subscribe açılışta ve her `moveend`'de (viewport + %10, D-059); full jitter backoff, snapshot'ta sıfırlama, 45 sn watchdog, `online` olayı (D-060); durum rozeti geri sayımlı.
+- Referans katmanlar (iller, havalimanları, geofence'ler) ve açma/kapama paneli, irtifa lejantı.
+- Detay paneli: canlı alanlar soketten, il / en yakın havalimanı / ülke REST'ten (15 sn'de bir yenileme).
+- Geofence olay listesi: REST geçmişi + canlı olaylar; tıklayınca uçağa uçuş.
+- Responsive: 640 px altında iki durumlu bottom sheet; mobilde seçilen uçak çekmecenin üstüne kaydırılıyor (D-061).
+- `make ui-smoke`: Playwright konteyneri, WebSocket frame'lerinden kabul kontrolleri, 16 kontrol, ekran görüntüleri `data/ui-smoke/` (D-062). Bundle: maplibre ayrı chunk.
+- Faz 4 hatası düzeltildi: redis-py 8'in 5 sn varsayılan `socket_timeout`'u boştaki consumer'ları düşürüyordu; channel layer'a `socket_timeout: 15` ve config testi (D-063). Sender, gönderim sırasında kopan istemci için ERROR yerine debug logu yazıyor.
+- Testler: frontend vitest 2 → 38 (mesaj ayrıştırma, store, bbox, irtifa rengi, backoff, throttle, biçimlendirme, basemap yedeği, olay birleştirme, SDF). Backend 131 → 132.
+- Dokümanlar: DECISIONS D-055…D-064, README (Live map), ARCHITECTURE (frontend diyagramı).
+- Learn: `09-react-ve-typescript.md`, `10-maplibre-ve-web-haritacilik.md`; `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- Uçaklar her güncellemede ilerliyor; yönler doğru (yerdeki uçak pistle hizalı, 253° heading'li uçak batı-güneybatıya bakıyor).
+- Kaydırınca yalnızca görünen bölgenin verisi geliyor: zoom + pan sonrası yeni ve daha küçük bbox ile subscribe, snapshot 61 → 20–25 uçak, bbox dışında sıfır uçak (WebSocket frame'lerinden).
+- Mobil (375×812): yatay taşma yok, çekmece kapalı başlıyor, dokununca detay açılıyor, zoom düğmeleri kapanmıyor.
+- Konsol hatası yok. `make ui-smoke` dev ve prod'da (`make up-prod`, statik derleme) geçiyor; `make up` geri açıldı.
+- `tsc --noEmit` ve ESLint temiz; `make test` (Go, vitest 38, pytest 132) ve `make lint` temiz.
+
+**Sapmalar**
+
+- Uçaklar 2 sn'de bir sıçrayarak ilerliyor (synthetic tick 2 sn, `setData` ≤ 1/sn kuralı); ara karelerde konum tahmini (dead reckoning) yok.
+- Plan dışı ekler: geofence olay listesi (REST geçmişiyle), `make ui-smoke`, dev'de `window.__map`.
+- maplibre worker'ı için Vite yapılandırması (D-064); plan bunu öngörmüyordu.
+
+**Bilinen sorunlar / notlar**
+
+- Dev'de StrictMode yüzünden her açılışta bir "WebSocket closed before the connection is established" uyarısı ve backend'de iptal edilen ilk `fetch` için asgiref "CancelledError in shielded future" logu çıkıyor; zararsız, prod'da yok.
+- Geofence katmanı açılışta bir kez yükleniyor; REST'ten eklenen/silinen bölge sayfa yenilenince görünüyor (Faz 6'da çizimle birlikte canlı hale gelecek).
+- Masaüstünde panel haritanın sağ 360 px'ini kapatıyor; harita merkezi buna göre kaydırılmıyor.
+- Basemap ve glyph'ler internetten geliyor; çevrimdışıyken yedek style görünüyor, etiketler (demotiles da erişilemezse) çıkmayabilir.
+- `make ui-smoke` ilk çalıştırmada ~2 GB'lık (açılmış hali 3,5 GB) Playwright imajını indiriyor.
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 4 onayı. Ardından Faz 5 (frontend çekirdeği): Faz 5 planı → Vite + React + TypeScript (strict) → MapLibre (`useRef`, OpenFreeMap + yedek style) → canlı uçak katmanı (`Map<icao24, Feature>`, `setData` ≤ 1/sn, `icon-rotate`, irtifaya göre renk, `promoteId` + `feature-state`, zoom'a bağlı etiket) → `useLiveSocket` (moveend'de subscribe, exponential backoff, bağlantı durumu, uçak başına en yeni `ts`) → il/havalimanı/geofence katmanları ve açma/kapama paneli → detay paneli (REST) → responsive düzen (375 px, bottom sheet) → vitest → `learn/09` ve `learn/10`.
+Proje sahibinin Faz 5 onayı. Ardından Faz 6 (ileri özellikler): Faz 6 planı → seçili uçağın izi (`/api/aircraft/{icao24}/track`, canlı uzatma) → geçmiş oynatma (`/api/playback`, zaman çubuğu, hız, interpolasyon) → haritada geofence çizimi (POST/PATCH/DELETE, `geofences.changed` ile canlı yenileme) → olay bildirimleri → vitest → `learn/11-zaman-serisi-cografi-veri.md`.
