@@ -31,7 +31,7 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-0.md`.
 - Makefile: `up`, `up-prod`, `down`, `clean`, `logs`, `ps`, `test`, `lint`, `seed`/`dem`/`record` (placeholder), `psql`, `shell-backend`.
 - Dokümanlar: `docs/ICD.md` (8 arayüz, birimler, sürümleme), `docs/ARCHITECTURE.md` (Mermaid), `docs/DECISIONS.md` (D-001…D-014), `CLAUDE.md`, `README.md`.
 - CI: `.github/workflows/ci.yml` (go vet/fmt/test, ruff + pytest + PostGIS service, tsc/eslint/vitest, prod imaj build). Yerelde aynı komutlar container'larda çalıştırıldı ve geçti; GitHub'da henüz koşmadı (remote yok).
-- Learn: `learn/00-cografi-temeller.md`, `learn/01-altyapi.md` (ayrı `learn/` reposunda commit'li).
+- Learn: `learn/00-basla-buradan.md` (yaşayan giriş dosyası, her faz kapanışında güncellenir), `learn/00-cografi-temeller.md`, `learn/01-altyapi.md` (ayrı `learn/` reposunda commit'li).
 
 **Doğrulanan kabul kriterleri**
 
