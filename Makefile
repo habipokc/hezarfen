@@ -9,7 +9,7 @@ DEV_RUN  = $(COMPOSE) run --rm --no-deps
 
 .DEFAULT_GOAL := help
 .PHONY: help env dirs up up-prod down clean logs ps test test-backend test-ingest test-frontend \
-        lint lint-backend lint-ingest lint-frontend seed prune dem record superuser shell-backend psql
+        lint lint-backend lint-ingest lint-frontend seed prune ws dem record superuser shell-backend psql
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -77,6 +77,9 @@ seed: env dirs ## Load airports + provinces (ogr2ogr) and seed geofences (REFERE
 
 prune: ## Delete position history older than POSITIONS_RETENTION_DAYS
 	$(COMPOSE) exec backend python manage.py prune_positions
+
+ws: ## Tail /ws/live/ through nginx (make ws args="--seconds 60 --bbox 28.5,40.8,29.5,41.4")
+	$(COMPOSE) exec backend python manage.py ws_tail $(args)
 
 dem: ## Build DEM, hillshade tiles and COG (Phase 7)
 	@echo "dem: implemented in Phase 7"

@@ -191,6 +191,48 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-3.md`.
 - İl sınırları basitleştirildiğinde komşu iller arasında küçük boşluklar oluşabilir (topoloji korunmuyor); bölge zoom'unda görünmez.
 - API'de kimlik doğrulama yok; yalnızca yerel kullanım içindir.
 
+## Faz 4 — Gerçek zamanlı katman (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-4.md`.
+
+**Tamamlananlar**
+
+- Bağımlılıklar: channels 4.3.2, channels-redis 4.3.0; dev: pytest-asyncio 1.4.0, daphne 4.2.3 (yalnızca `channels.testing` için) (D-048).
+- Yeni `realtime` uygulaması:
+  - `state.py`: `LiveState` (coalescing, 60 sn zaman aşımı), `merge_deltas`, `filter_delta`, subscribe bbox doğrulaması.
+  - `outbox.py`: bağlantı başına backpressure; deltalar birleşiyor, olaylar düşmüyor, 1000 mesajda 1013 ile kapatma (D-049, ICD 1.4).
+  - `consumers.py`: `/ws/live/`; subscribe → snapshot (DB'den), bbox'a göre delta, geofence_event, 15 sn heartbeat, hata mesajları.
+  - `relay.py` + `relay` komutu: `positions.batch` ve `geofences.changed` aboneliği, saniye sınırında flush, Redis kopunca yeniden bağlanma, heartbeat dosyası (D-053).
+  - `queries.py`: batch başına tek geofence sorgusu (`unnest` + `ST_Contains`, D-051), olaylardan durum kurma, olayları toplu yazma.
+  - `ws_tail` komutu ve `make ws`.
+- `geofencing/tracker.py`: enter/exit state machine; batch'te olmamak çıkış değil, zaman aşımında olaysız unutma, silinen bölgeyi olaysız atma (D-052).
+- ASGI: `ProtocolTypeRouter` + `AllowedHostsOriginValidator` (D-050). `relay` komutu `tracking`'ten `realtime`'a taşındı.
+- Testler: backend 80 → 131. Saf: state, outbox, tracker (38). DB: tek sorgu kontrolü, enter/exit bir kez, yeniden başlatma, coalescing, `geofences.changed`. Consumer: Origin reddi, subscribe öncesi yalnızca heartbeat, hatalar, snapshot, bbox filtresi, boş delta yok, olaylar filtresiz, yeni subscribe. Testlerde in-memory channel layer (D-054).
+- Dokümanlar: ICD 1.4 (§5 zamanlama, §6 Origin, sıralama notu, §6.4 backpressure), DECISIONS D-048…D-054, README (Live WebSocket), ARCHITECTURE (gerçek zamanlı katman diyagramı).
+- Learn: `08-websocket-ve-gercek-zamanli.md`; `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- `make ws` (nginx üzerinden, `ws://nginx/ws/live/`): snapshot, ardından synthetic tick'e uygun olarak 2 sn'de bir delta (ICD: en fazla 1/sn), 15 sn'de bir heartbeat.
+- Synthetic uçaklar LTFM/LTFJ 15 km bölgelerine girip çıkınca `geofence_event` geliyor; olaylar `geofence_events`'e yazılıyor ve `/api/geofence-events`'te aynı id ile görünüyor.
+- Relay yeniden başlatıldığında 7 çift olaylardan geri kuruldu; tekrar eden `enter` yok.
+- REST'ten geofence oluşturma/silme relay'e ulaşıyor; yeni bölgedeki girişler hemen yakalanıyor.
+- `make up-prod`: 7 servis healthy, 2 uvicorn worker ile WebSocket çalışıyor. `make up` geri açıldı.
+- `make test` (Go, vitest 2, pytest 131) ve `make lint` temiz.
+
+**Sapmalar**
+
+- Backpressure politikası ICD 1.3'ten farklı: taşınca snapshot yerine bekleyen deltalar birleştiriliyor (ICD 1.4'e işlendi, D-049).
+- Delta sıklığı ingest döngüsüne bağlı: synthetic 2 sn tick'te 2 sn'de bir delta geliyor (sözleşme "en fazla 1/sn").
+- Plan dışı ekler: `ws_tail` komutu / `make ws`, WebSocket'te Origin kontrolü.
+
+**Bilinen sorunlar / notlar**
+
+- Snapshot DB'den, deltalar relay belleğinden geldiği için snapshot'tan hemen önce kuyruğa girmiş bir delta ~1 sn eski konum taşıyabilir; istemci uçak başına en yeni `ts`'yi tutmalı (ICD §6.2, Faz 5'te frontend).
+- Origin başlığı olmadan bağlanan araçlar (ör. düz `websocat`) 403 alır; `-H 'Origin: http://localhost:8800'` gerekir.
+- Bölge sınırında gidip gelen uçak için histerezis yok; sık enter/exit üretebilir.
+- Yere inip sinyali kesilen uçak için `exit` yazılmıyor (bilinçli, D-052); olay tablosunda kapanmamış `enter`'lar kalabilir.
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 3 onayı. Ardından Faz 4 (gerçek zamanlı katman): Faz 4 planı → Channels + channels-redis, ASGI routing, `/ws/live/` consumer (subscribe, snapshot, bbox'a göre delta, geofence_event, heartbeat, backpressure) → `relay` management command'ı (positions.batch aboneliği, delta, saniyede 1 coalescing, tek sorguda geofence kontrolü + enter/exit state machine, yeniden başlatmada durumu son olaylardan kurma, `geofences.changed` ile cache yenileme) → testler → `learn/08`.
+Proje sahibinin Faz 4 onayı. Ardından Faz 5 (frontend çekirdeği): Faz 5 planı → Vite + React + TypeScript (strict) → MapLibre (`useRef`, OpenFreeMap + yedek style) → canlı uçak katmanı (`Map<icao24, Feature>`, `setData` ≤ 1/sn, `icon-rotate`, irtifaya göre renk, `promoteId` + `feature-state`, zoom'a bağlı etiket) → `useLiveSocket` (moveend'de subscribe, exponential backoff, bağlantı durumu, uçak başına en yeni `ts`) → il/havalimanı/geofence katmanları ve açma/kapama paneli → detay paneli (REST) → responsive düzen (375 px, bottom sheet) → vitest → `learn/09` ve `learn/10`.

@@ -3,6 +3,7 @@ DJANGO_SETTINGS_MODULE = "hezarfen.settings"
 python_files = ["test_*.py"]
 # cacheprovider off: the source dir is a bind mount and the container runs as root
 addopts = "-ra -p no:cacheprovider"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100

@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 from django.contrib.gis.geos import Point
 
 from reference.models import Airport
@@ -6,6 +7,17 @@ from reference.models import Airport
 # Real coordinates (OurAirports), lon/lat order.
 LTFM = (28.7519, 41.2753)  # Istanbul Airport
 LTFJ = (29.3092, 40.8986)  # Sabiha Gokcen
+
+
+@pytest.fixture(autouse=True)
+def in_memory_channel_layer(settings):
+    """Channels layer inside the test process; the relay and consumers meet there."""
+    from channels.layers import channel_layers
+
+    settings.CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+    channel_layers.backends.clear()
+    yield
+    channel_layers.backends.clear()
 
 
 @pytest.fixture
@@ -52,3 +64,15 @@ def make_aircraft(db):
         return icao24
 
     return make
+
+
+@pytest_asyncio.fixture
+async def close_async_db_connections():
+    """Async tests reach the DB through sync_to_async's worker thread, whose connection
+    outlives the test (CONN_MAX_AGE) and blocks dropping the test database. Close it from
+    that same thread."""
+    yield
+    from asgiref.sync import sync_to_async
+    from django.db import connections
+
+    await sync_to_async(connections.close_all)()

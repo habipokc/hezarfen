@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.gis",
     "django.contrib.postgres",
+    "channels",
     "rest_framework",
     "rest_framework_gis",
     "drf_spectacular",
@@ -32,6 +33,7 @@ INSTALLED_APPS = [
     "reference",
     "geofencing",
     "terrain",
+    "realtime",
 ]
 
 MIDDLEWARE = [
@@ -95,6 +97,21 @@ REGION_BBOX = (
 LIVE_WINDOW_SECONDS = 60
 INGEST_METRICS_URL = os.environ.get("INGEST_METRICS_URL", "http://ingest:8080/metrics")
 GEOFENCES_CHANGED_CHANNEL = os.environ.get("GEOFENCES_CHANGED_CHANNEL", "geofences.changed")
+# Published by ingest (ICD §4); the name is fixed on the Go side
+POSITIONS_CHANNEL = "positions.batch"
+
+# Relay -> WebSocket consumers (ICD §5). Same Redis as everything else; Channels keys
+# live under their own "asgi" prefix.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL]},
+    }
+}
+LIVE_GROUP = "live"
+WS_HEARTBEAT_SECONDS = 15
+# Queued geofence events/heartbeats per socket before a stuck client is disconnected
+WS_MAX_QUEUED_MESSAGES = 1000
 
 REST_FRAMEWORK = {
     # Read-only public data plus demo geofence editing: no accounts in this project.

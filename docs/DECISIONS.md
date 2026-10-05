@@ -343,3 +343,83 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** `/api/aircraft/live` Feature'larının `properties`'i ICD `Aircraft` nesnesinin tamamı (`lon`, `lat` dahil); geometri ayrıca var. `id_field` kapalı.
 - **Neden:** Frontend REST'ten gelen veriyle WebSocket `snapshot`/`delta`'daki veriyi aynı tiple işleyebilsin (`feature.properties` doğrudan bir `Aircraft`). Fazlalık uçak başına ~30 bayt.
 - **Alternatif:** Konumu yalnızca geometride tutmak.
+
+## D-048 — Channels sürümleri, `realtime` uygulaması, uvicorn kalıyor
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:**
+  - Bağımlılıklar: channels 4.3.2, channels-redis 4.3.0 (`RedisChannelLayer`, `REDIS_URL`); dev bağımlılıkları pytest-asyncio 1.4.0 ve daphne 4.2.3.
+  - daphne yalnızca testte: `channels.testing` paket olarak import edilirken daphne'yi istiyor. Sunucu her iki ortamda da uvicorn.
+  - Gerçek zamanlı kod yeni bir `realtime` uygulamasında (state, outbox, consumer, relay, sorgular). Geofence state machine `geofencing/tracker.py`'de.
+  - `relay` komutu `tracking`'ten `realtime`'a taşındı.
+- **Neden:** uvicorn Faz 0'dan beri ASGI sunucusu ve WebSocket'i zaten destekliyor; ikinci bir sunucu gereksiz. Relay ile consumer aynı state/delta kodunu paylaştığı için tek uygulamada duruyorlar.
+- **Alternatif:** Prod'da daphne (Channels'ın referans sunucusu). `RedisPubSubChannelLayer` (daha yeni, ama kapasite ve süre sınırı davranışı daha az belgelenmiş).
+
+## D-049 — Backpressure: bekleyen delta'lar birleştiriliyor (ICD 1.4)
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:** Her bağlantının bir `Outbox`'ı ve soketi bekleyen tek bir sender task'ı var. Channel layer handler'ları yalnızca outbox'a yazıp hemen dönüyor.
+  - Gönderilmeyi bekleyen bir delta varken gelen yeni delta onunla birleştiriliyor (`merge_deltas`: uçak başına son upsert veya remove kazanır).
+  - Yeni `subscribe` bekleyen delta'yı siliyor; yerini snapshot alıyor.
+  - Geofence olayları, heartbeat ve hata mesajları FIFO kuyrukta bekliyor, hiç düşürülmüyor. 1000'i aşarsa bağlantı 1013 koduyla kapatılıyor.
+- **Neden:**
+  - Yavaş bir istemcide `send` bloklansa bile handler'lar bekletilmiyor. Böylece channels-redis'in kanal başına 100 mesajlık kapasitesi dolmuyor ve mesajlar sessizce kaybolmuyor.
+  - Birleştirme bellek sınırını canlı uçak sayısına bağlıyor ve yavaş istemciye her zaman güncel durumu veriyor.
+  - ICD 1.3'teki "eski delta'ları at, sonra snapshot gönder" planı her taşmada bir DB sorgusu demekti; birleştirme hiç sorgu yapmadan aynı sonucu veriyor.
+- **Alternatif:** Sabit boyutlu kuyruk + taşınca snapshot (ICD 1.3); en eski mesajı düşürmek (istemcinin durumu bozulur); yavaş istemciyi hemen kapatmak.
+
+## D-050 — WebSocket'te Origin kontrolü
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:** `AllowedHostsOriginValidator`: Origin başlığındaki host `ALLOWED_HOSTS`'ta değilse handshake 403 ile reddediliyor. `ws_tail` `Origin: http://localhost:8800` gönderiyor.
+- **Neden:** WebSocket'ler CORS'a tabi değil; başka bir sitedeki sayfa kullanıcının tarayıcısından soket açabilir (cross-site WebSocket hijacking). Bugün veri herkese açık ve kimlik doğrulama yok, ama kontrol bedava ve ileride kimlik doğrulama eklenirse zaten gerekecek.
+- **Alternatif:** Kontrolsüz kabul (websocat gibi araçlarla başlıksız bağlantı kolaylaşırdı).
+
+## D-051 — Geofence kontrolü: batch başına tek sorgu, cache yalnızca isimler
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:**
+  - Her batch için tek sorgu: `unnest(icao24[], lon[], lat[])` ile aktif `geofences` tablosu `ST_Contains` üzerinden join ediliyor. Ingest'in insert'lerindeki dizi deseninin aynısı; GiST indeksi her noktayı önce kutusu tutan bölgelere daraltıyor.
+  - Relay'in cache'i yalnızca aktif bölgelerin `id → name` haritası. `geofences.changed` gelince, Redis'e yeniden bağlanınca ve sorgu bilinmeyen bir id döndürünce yenileniyor.
+- **Neden:**
+  - Geometri DB'de kaldığı için bir bölgenin şekli değişince bir sonraki batch yeni şekle göre kontrol ediliyor; doğruluk cache'in tazeliğine bağlı değil.
+  - Uçak başına sorguya göre (60 uçak → 60 gidiş-dönüş) yük bağlantı sayısından bağımsız.
+  - Smoke testinde yeni bölgedeki giriş olayları, `geofences.changed` mesajından 55 ms önce yakalandı.
+- **Alternatif:** Geçici tablo (her batch'te DDL ve ek gidiş-dönüş); `VALUES` listesi (parametre sayısı uçak sayısıyla büyür); geometrileri shapely `STRtree` ile bellekte tutmak (DB'ye hiç gitmez, ama plan PostGIS istiyor ve cache bayatlaması gerçek bir risk olur).
+
+## D-052 — Geofence state machine kuralları
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:**
+  - Durum, (uçak, bölge) çifti başına "içeride ya da değil".
+  - Batch'te olmayan uçağın durumu değişmiyor: kaçan bir rapor çıkış sayılmıyor.
+  - 60 sn görülmeyen uçak `exit` üretilmeden unutuluyor. Silinen ya da pasifleştirilen bölgenin çiftleri de olaysız atılıyor.
+  - Aynı batch'te önce `exit`, sonra `enter` sıralanıyor.
+  - Yeniden başlatmada durum, son 24 saatteki olaylardan kuruluyor: hâlâ canlı olan uçaklar için her çiftin son olayı `enter` ise çift içeride sayılıyor.
+  - İlk kurulumda zaten içeride olan uçaklar için `enter` üretiliyor.
+- **Neden:**
+  - Sinyali kaybolan uçak için nerede olduğunu bilmeden "çıktı" demek yanlış bilgi olurdu (ör. LTFM'ye inip transponderini kapatan uçak).
+  - Yeniden başlatmada `enter`'ların tekrarlanmaması kabul kriterinin parçası.
+  - 24 saat sınırı `DISTINCT ON` taramasını sınırlı tutuyor; uçan bir uçak bir bölgede bu kadar kalmaz.
+- **Alternatif:** Zaman aşımında son konumla `exit` yazmak; histerezis/debounce (sınırda gidip gelen uçak için; ihtiyaç görülürse eklenir).
+
+## D-053 — Relay akışı: saniye sınırında flush, snapshot DB'den, önce yaz sonra yayınla
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:**
+  - Relay tek bir asyncio döngüsü: okuyucu batch'leri `LiveState`'e uyguluyor ve geofence kontrolünü yapıyor; ticker her duvar saati saniyesinde `flush` ediyor.
+  - Senkron ORM çağrıları `sync_to_async` ile ayrı bir iş parçacığında, her çağrıdan önce `close_old_connections()` ile.
+  - Açılışta `LiveState` son 60 saniyedeki `aircraft_latest`'ten tohumlanıyor (pending değil). Consumer'ın snapshot'ı da DB'den okunuyor, relay'in belleğinden değil.
+  - Geofence olayı önce `geofence_events`'e yazılıyor, sonra yayınlanıyor.
+- **Neden:**
+  - Snapshot ile REST aynı kaynaktan okuyor ve consumer süreci relay'e bağımlı olmuyor.
+  - Olay mesajındaki `id` REST'te hemen bulunabiliyor.
+  - Uzun ömürlü bir süreçte istek döngüsü olmadığı için bozuk bağlantılar elle geri dönüştürülüyor (DB yeniden başlarsa relay toparlanıyor).
+- **Alternatif:** Snapshot'ı relay'den Redis'e yazdırmak (ikinci bir doğruluk kaynağı); senkron relay (channel layer async olduğu için her yayında `async_to_sync` gerekirdi).
+
+## D-054 — Testlerde in-memory channel layer
+
+- **Tarih:** 2026-10-05 (Faz 4)
+- **Karar:** Testlerde autouse fixture `InMemoryChannelLayer` kullanıyor. Consumer testleri tam ASGI uygulamasına (Origin doğrulayıcı dahil) `WebsocketCommunicator` ile bağlanıyor. Relay testleri gerçek PostGIS'e `transaction=True` ile gidiyor. Async testlerin iş parçacığında kalan DB bağlantısını bir fixture kapatıyor.
+- **Neden:** Deterministik ve hızlı; Redis layer'ın kendisi channels-redis'in sorumluluğu. Redis üzerinden uçtan uca yol smoke testte (`make ws`, dev ve prod) doğrulandı.
+- **Alternatif:** Testlerde gerçek Redis layer (ayrı prefix ve temizlik gerekirdi).

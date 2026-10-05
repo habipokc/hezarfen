@@ -1,4 +1,7 @@
 -r requirements.txt
+# channels.testing imports daphne at package import (WebsocketCommunicator); tests only
+daphne==4.2.3
 pytest==9.1.1
+pytest-asyncio==1.4.0
 pytest-django==4.14.0
 ruff==0.16.10

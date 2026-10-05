@@ -2,7 +2,7 @@
 
 Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
 
-> Status: **Phase 3 — REST API.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **Phase 4 — real-time layer (WebSocket, relay, geofence events).** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
 
 ## Stack
 
@@ -74,6 +74,18 @@ curl -X POST localhost:8800/api/geofences/ -H 'Content-Type: application/json' -
 ```
 
 The API has no authentication: it is meant for a local, single-user deployment.
+
+## Live WebSocket
+
+`ws://localhost:8800/ws/live/` streams the live picture ([docs/ICD.md §6](docs/ICD.md)): send `{"type":"subscribe","bbox":[minLon,minLat,maxLon,maxLat]}`, receive a `snapshot`, then at most one `delta` per second for that bbox, every `geofence_event` (enter/exit) and a `heartbeat` every 15 s. The handshake must carry an allowed `Origin` header (browsers do this themselves).
+
+```bash
+make ws                                          # 15 s through nginx, one line per message
+make ws args="--seconds 60 --bbox 28.5,40.8,29.5,41.4"
+make ws args="--raw"                             # full JSON frames
+```
+
+Geofence events are produced by the `relay` worker (`make logs s=relay`) and stored in `geofence_events` (`/api/geofence-events`).
 
 ## Documentation
 
