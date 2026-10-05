@@ -2,7 +2,7 @@
 
 Real-time air traffic and geospatial analysis platform for the Marmara region: a live aircraft map with geofence alerts, track playback, terrain (DEM/hillshade, AGL) and a server-rendered operations panel.
 
-> Status: **Phase 2 — Go ingest service.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
+> Status: **Phase 3 — REST API.** See [PROGRESS.md](PROGRESS.md). The full README (screenshots, live mode setup, data attributions) arrives in Phase 8.
 
 ## Stack
 
@@ -57,6 +57,23 @@ Replay the bundled real recording (25 snapshots of the Marmara sky, recorded ano
 Budget: a registered client has 4,000 credits per day and this region costs 1 credit per request, so 10 s polling lasts about 11 hours before adaptive polling slows down. For all-day running set `POLL_INTERVAL_SECONDS=20` or more. Live mode without credentials also works (anonymous, 400 credits per day). Raw recordings accumulate in `data/raw/` and become replay material.
 
 Host ports (override in `.env`): `8800` (nginx, the only public entry point), `127.0.0.1:55432` (PostGIS) and `127.0.0.1:56379` (Redis) for debugging.
+
+## REST API
+
+Swagger UI: <http://localhost:8800/api/docs/> (OpenAPI schema at `/api/schema/`). Contract: [docs/ICD.md §7](docs/ICD.md).
+
+```bash
+curl 'localhost:8800/api/aircraft/live?bbox=28.5,40.7,29.5,41.4'   # GeoJSON, last 60 s
+curl  localhost:8800/api/aircraft/<icao24>/                         # + province, nearest airport
+curl  localhost:8800/api/aircraft/<icao24>/track                    # LineString, last 30 min
+curl 'localhost:8800/api/playback?bucket=30'                        # last 15 min in frames
+curl  localhost:8800/api/stats
+curl -X POST localhost:8800/api/geofences/ -H 'Content-Type: application/json' -d '{"type":"Feature",
+  "geometry":{"type":"Polygon","coordinates":[[[28.9,41.0],[29.0,41.0],[29.0,41.1],[28.9,41.1],[28.9,41.0]]]},
+  "properties":{"name":"Bosphorus box"}}'
+```
+
+The API has no authentication: it is meant for a local, single-user deployment.
 
 ## Documentation
 

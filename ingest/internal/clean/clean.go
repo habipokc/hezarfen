@@ -148,7 +148,9 @@ func (c *Cleaner) isJump(id string, p geo.Point, ts int64) bool {
 		return false
 	}
 	if dt := ts - prev.ts; dt > 0 {
-		speed := geo.Distance(prev.p, p) / float64(dt)
+		// Timestamps are whole seconds, so the true interval can be up to dt+1: judge
+		// by the slowest speed the fixes allow, or 2 s ticks read as 1 s double the speed.
+		speed := geo.Distance(prev.p, p) / float64(dt+1)
 		if speed > MaxSpeed {
 			prev.jumps++
 			if prev.jumps <= maxConsecutiveJumps {

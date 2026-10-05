@@ -260,3 +260,86 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** `/healthz`, süreç ayakta olduğu sürece 200 döner. Döngü sağlığı `/metrics`'teki `last_poll_at` ve `error_count` ile izlenir (Faz 8 ops paneli).
 - **Neden:** Live modda 429 sonrası bekleme saatler sürebilir; healthcheck buna bağlansaydı Docker container'ı gereksiz yere "unhealthy" yapar, `restart` ile de kredi harcayan bir döngüye sokardı.
 - **Alternatif:** `last_poll_at`'e göre 503 dönmek.
+
+## D-037 — DRF + drf-gis + drf-spectacular, django-filter yok
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** djangorestframework 3.18.1, djangorestframework-gis 1.3.0, drf-spectacular 0.30.0, shapely 2.1.2. Sorgu parametreleri (`bbox`, `since`, `active`, `type` …) `hezarfen/api/params.py` içindeki saf fonksiyonlarla elle ayrıştırılıyor. Paylaşılan API kodu `hezarfen/api/`, endpoint'ler ilgili app'lerde (`tracking/api.py`, `geofencing/api.py`, `reference/api.py`).
+- **Neden:** Az ve basit filtre var; elle ayrıştırma her 400 yanıtını ICD §7.1 biçiminde ve doğru kodla (`invalid_bbox`, `window_too_large`) vermeyi kolaylaştırıyor. Saf fonksiyonlar DB'siz test edilebiliyor.
+- **Alternatif:** django-filter `FilterSet` (bağımlılık + hata biçimini ayrıca uyarlamak gerekirdi).
+
+## D-038 — Tek hata biçimi: özel DRF exception handler
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `hezarfen.api.errors.exception_handler` her hatayı `{"error": {"code", "message", "details"}}` biçimine çeviriyor. `ApiError` açık kod taşıyor; serializer `ValidationError`'larında `invalid_geometry` gibi bilinen kodlar üst seviyeye çıkarılıyor, diğerleri `invalid_parameter`. DRF'in kendi hataları `default_code` ile geliyor (`parse_error`, `method_not_allowed`). DB bağlantı hatası 503 `unavailable`. Bilinmeyen `/api/` yolları catch-all ile JSON 404.
+- **Neden:** Frontend tek bir hata yolu yazabilsin; ICD §7.1 sözleşmesi.
+- **Alternatif:** DRF varsayılanı (`{"detail": …}` ve alan bazlı dict; biçim duruma göre değişiyor).
+
+## D-039 — API'de kimlik doğrulama yok, CSRF yok
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `DEFAULT_AUTHENTICATION_CLASSES = []`, `AllowAny`. Geofence CRUD dahil her şey açık.
+- **Neden:** Tek kullanıcılı yerel demo/portföy projesi; PLAN'da kullanıcı hesabı yok. Authentication sınıfı olmayınca `SessionAuthentication` da yok, dolayısıyla tarayıcıda admin oturumu açık olsa bile POST'lar CSRF'e takılmıyor.
+- **Alternatif:** Token auth ya da geofence yazımını admin oturumuna bağlamak. Dışarı açılacaksa (Faz 8) yeniden değerlendirilecek.
+
+## D-040 — En yakın havalimanı: KNN aday + metrik yeniden sıralama
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `ORDER BY geom <-> point LIMIT 8` (ORM'de `GeometryDistance`) ile 8 aday alınıyor, adaylar sferoid üzerindeki metre mesafesine (`Distance`) göre yeniden sıralanıp en yakını seçiliyor.
+- **Neden:** `<->` geometry'de düzlemsel derece mesafesi kullanıyor; 41°K'de bir boylam derecesi enlem derecesinden ~%25 kısa, yani derece cinsinden en yakın, metre cinsinden en yakın olmayabiliyor (testte somut örnek var). İki aşama hem index'i kullanıyor hem doğru sonuç veriyor (RAG'deki "top-k getir, sonra rerank" kalıbı).
+- **Alternatif:** `geography` KNN (ifade üzerinde ayrı GiST index gerekir) ya da `ORDER BY ST_Distance` (index kullanmaz, her satırı hesaplar).
+
+## D-041 — İz: ham SQL `ST_MakeLine(geom ORDER BY ts)`, 24 saat sınırı
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `/api/aircraft/{icao24}/track` tek bir aggregate sorgu: `ST_MakeLine(geom ORDER BY ts)`, min/max ts ve nokta sayısı. 2'den az nokta varsa `geometry: null` (RFC 7946 LineString en az iki konum ister). `since` en fazla 24 saat geriye gidebilir, daha eskisi `window_too_large`. Bilinmeyen uçak 404.
+- **Neden:** Sıralı birleştirme DB'de tek geçişte yapılıyor; satırları Python'a taşımaya gerek yok. 24 saat sınırı sentetik modda (2 sn tick) bir uçağın bir haftalık izinin 300 bin noktalık yanıta dönüşmesini engelliyor.
+- **Alternatif:** Noktaları ORM ile çekip GEOS `LineString` kurmak.
+
+## D-042 — Playback: bucket başına son konum, nginx gzip, sayfalama yok
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `DISTINCT ON (bucket, icao24) … ORDER BY bucket, icao24, ts DESC` ile her bucket'ta her uçağın en son konumu. Frame `ts`'i bucket başlangıcı (bucket'ın katlarına hizalı, ilk frame `start`'tan önce başlayabilir); boş bucket'lar dönmüyor. Varsayılanlar: `end = now`, `start = end − 15 dk`, `bucket = 10` (1–600). Pencere > 2 saat → `window_too_large`. Sıkıştırma nginx'te (`gzip on; gzip_proxied any; gzip_types application/json …`).
+- **Neden:** Ölçüm: 15 dakikalık pencere 1,19 MB → gzip ile 208 KB. 2 saat yaklaşık 9,5 MB / 1,6 MB gzip; tek istekte kabul edilebilir ve frontend'de sayfalama mantığı gerektirmiyor. Sıkıştırma proxy'de olunca Django CPU harcamıyor ve bütün JSON yanıtlar faydalanıyor.
+- **Alternatif:** Zaman bazlı sayfalama (`next` ile sonraki pencere), Django `GZipMiddleware`.
+
+## D-043 — Geofence doğrulaması shapely'de, yayın commit sonrası
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `geofencing/validation.py`:
+  - Yalnızca Polygon kabul ediliyor, en fazla 1000 vertex, koordinatlar geçerli aralıkta olmalı.
+  - Geçersiz poligona `make_valid` uygulanıyor; sonuç tek poligon değilse (ör. kelebek → iki üçgen) hangi kuralın bozulduğu (`explain_validity`) ve kaç parçaya bölündüğü söylenerek reddediliyor.
+  - Alan 0,25–20.000 km² arasında olmalı. Alan, poligonun kendi enleminde dereceyi metreye ölçekleyen yaklaşık eşit-alan dönüşümüyle hesaplanıyor.
+  - Poligon bölge bbox'ıyla kesişmeli.
+  - `kind` istemciden alınmıyor; her zaman `user_drawn`.
+  - `geofences.changed/v1` mesajı `transaction.on_commit` ile yayınlanıyor; Redis hatası loglanıyor ama isteği bozmuyor.
+- **Neden:** shapely istek sürecinde, DB'ye gitmeden ve ayrıntılı hata sebebiyle doğruluyor; PostGIS yalnızca temiz şekil saklıyor. Commit sonrası yayın, relay'in değişikliği görmeden cache'ini yenilemesini engelliyor.
+- **Alternatif:** Doğrulamayı PostGIS'te (`ST_IsValid`, `ST_Area(geography)`) yapmak; pyproj ile gerçek eşit-alan projeksiyonu (ek bağımlılık, sınır kontrolü için gereksiz hassasiyet).
+
+## D-044 — İl sınırları: `ST_Simplify` 0,01°, 5 ondalık
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `/api/provinces/` `ST_Simplify(geom, tol, preserveCollapsed=true)` döndürüyor. Varsayılan tolerans 0,01° (yaklaşık 1,1 km), `?simplify=0…0.1` ile değiştirilebilir (0 = orijinal). Koordinatlar 5 ondalığa yuvarlanıyor.
+- **Neden:** Ölçüm: Natural Earth 10m zaten genelleştirilmiş (81 il, 9856 vertex). 0,005 sadece 6242'ye inerken 0,01 4407'ye indiriyor; yanıt 206 KB'tan 98 KB'a düşüyor. Bölgenin tamamını gösteren zoom'da bir piksel ~1 km, fark görünmüyor. `preserveCollapsed` küçük adaların kaybolmasını önlüyor.
+- **Alternatif:** `ST_SimplifyPreserveTopology` (komşu il sınırları arasındaki boşlukları o da çözmüyor); vector tile (Faz 7+ için aşırı).
+
+## D-045 — `/api/stats` ingest durumu
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `ingest: {"status": "ok"|"stale"|"starting"|"unreachable", "metrics": {…}|null}`. Backend `INGEST_METRICS_URL`'den (`http://ingest:8080/metrics`) 1 sn timeout ile çekiyor; `last_poll_at` 60 sn'den eskiyse `stale`.
+- **Neden:** Frontend ve ops paneli tek alana bakarak durumu gösterebilsin; ham metrikler de ayrıntı için duruyor. Ingest kapalıyken endpoint yine 200 dönüyor.
+- **Alternatif:** Metrikleri Redis'e yazdırmak (ingest'e yeni sorumluluk).
+
+## D-046 — Sıçrama filtresinde 1 sn tolerans (Faz 2 hatası)
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `clean` sıçrama hızını `mesafe / (dt + 1)` ile hesaplıyor.
+- **Neden:** Faz 3 smoke testinde synthetic modda `rejected_total.impossible_jump` değerinin 257'ye çıktığı görüldü. Her 30 sn'de bir 16 uçak (230 m/s seyirdekiler) reddediliyordu. Zaman damgaları tam saniyeye kesildiği için 2 sn'lik gerçek aralık 1 sn görünebiliyor (11,00 → 12,99): 460 m / 1 sn = 460 m/s > 400. Her iki damganın kesme hatası toplamda 1 sn'den az olduğu için gerçek aralık en fazla `dt + 1`; bu en düşük olası hızı veriyor ve gerçek ışınlanmaları yine yakalıyor.
+- **Alternatif:** Synthetic'te sanal saat kullanmak (yalnızca sentetiği düzeltirdi; gerçek veride de aynı kesme var).
+
+## D-047 — REST `Aircraft` özellikleri `lon`/`lat` dahil
+
+- **Tarih:** 2026-10-05 (Faz 3)
+- **Karar:** `/api/aircraft/live` Feature'larının `properties`'i ICD `Aircraft` nesnesinin tamamı (`lon`, `lat` dahil); geometri ayrıca var. `id_field` kapalı.
+- **Neden:** Frontend REST'ten gelen veriyle WebSocket `snapshot`/`delta`'daki veriyi aynı tiple işleyebilsin (`feature.properties` doğrudan bir `Aircraft`). Fazlalık uçak başına ~30 bayt.
+- **Alternatif:** Konumu yalnızca geometride tutmak.

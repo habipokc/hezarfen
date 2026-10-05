@@ -143,3 +143,19 @@ func TestPersistentJumpsReanchorTrack(t *testing.T) {
 		t.Errorf("accepted = %d, want 2 (the re-anchoring fix and the one after it)", accepted)
 	}
 }
+
+func TestWholeSecondTimestampsAllowOneSecondSlack(t *testing.T) {
+	c := newCleaner()
+	// 460 m apart (230 m/s for 2 s), but whole-second truncation made the timestamps
+	// only 1 s apart (fixes at 11.0 s and 12.99 s): the real interval can be up to 2 s
+	c.Clean(opensky.Snapshot{Time: 1011, States: []opensky.State{state("4b0001", 29, 41, 1011)}})
+	res := c.Clean(opensky.Snapshot{Time: 1012, States: []opensky.State{state("4b0001", 29.00548, 41, 1012)}})
+	if len(res.Records) != 1 {
+		t.Fatalf("cruise-speed fix rejected: %v", res.Rejected)
+	}
+	// 1 km "in 1 s" is still impossible even with the slack (≥ 500 m/s)
+	res = c.Clean(opensky.Snapshot{Time: 1013, States: []opensky.State{state("4b0001", 29.0174, 41, 1013)}})
+	if res.Rejected[Jump] != 1 {
+		t.Errorf("rejected = %v", res.Rejected)
+	}
+}

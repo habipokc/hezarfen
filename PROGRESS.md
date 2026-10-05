@@ -137,6 +137,60 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-2.md`.
 - Dev'de her ingest yeniden başlatmasında sentetik filo baştan başlıyor (sabit seed); `positions`'ta yeniden başlatma anlarında izler "atlıyor". Synthetic için zararsız.
 - `aircraft` tablosunda önceki rastgele seed denemelerinden kalan 120 sentetik uçak var; 60 sn penceresinin dışında kaldıkları için Faz 4'te görünmeyecekler.
 
+## Faz 3 — Django REST API (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-3.md`.
+
+**Tamamlananlar**
+
+- Bağımlılıklar: djangorestframework 3.18.1, djangorestframework-gis 1.3.0, drf-spectacular 0.30.0, shapely 2.1.2 (D-037).
+- `hezarfen/api/`:
+  - ICD §7.1 hata biçimi (exception handler, `ApiError`, JSON 404 catch-all, 503 `unavailable`) (D-038).
+  - Saf parametre ayrıştırıcıları.
+  - `UnixTimeField`.
+  - URL tablosu.
+- Endpoint'ler (ICD 1.3 §7.2):
+  - `/api/aircraft/live`: `&&` ile bbox, son 60 sn, tek sorgu.
+  - `/api/aircraft/{icao24}/`: il ve en yakın havalimanı (KNN aday + metrik yeniden sıralama, D-040).
+  - `/api/aircraft/{icao24}/track`: `ST_MakeLine(geom ORDER BY ts)`, 24 saat sınırı (D-041).
+  - `/api/playback`: `DISTINCT ON` ile bucket başına son konum, ≤ 2 saat (D-042).
+  - `/api/geofences/`: CRUD, PUT yok; shapely doğrulaması; `geofences.changed/v1` commit sonrası yayınlanıyor (D-043).
+  - `/api/geofence-events`: cursor sayfalama.
+  - `/api/provinces/`: `ST_Simplify` 0,01°, 5 ondalık (D-044).
+  - `/api/airports/`.
+  - `/api/stats`: ingest durumu `ok|stale|starting|unreachable` (D-045).
+  - `/api/schema/`, `/api/docs/` (Swagger).
+- Kimlik doğrulama yok (D-039). REST `Aircraft` özellikleri `lon`/`lat` içeriyor (D-047).
+- nginx: JSON yanıtlar için gzip.
+- Faz 2 hatası düzeltildi: sıçrama filtresi tam saniye kesmesi yüzünden synthetic'te 230 m/s uçakları reddediyordu; hız artık `dt + 1` ile hesaplanıyor (D-046, Go testi eklendi).
+- Testler: backend 16 → 80 (parametreler, poligon doğrulama, her endpoint, OpenAPI `--validate --fail-on-warn`). Go testleri 56.
+- Dokümanlar: ICD 1.3, DECISIONS D-037…D-047, README (REST API bölümü), ARCHITECTURE (REST diyagramı), `.env.example`.
+- Learn: `07-drf-ve-rest-tasarimi.md`; `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- Synthetic veri akarken bütün endpoint'ler anlamlı GeoJSON/JSON dönüyor; nginx üzerinden curl ile doğrulandı.
+- `/api/aircraft/live` 60 uçakla 52–65 ms (dev ve prod, nginx dahil) → < 100 ms.
+- Swagger UI ve şema 200; şema uyarısız doğrulanıyor.
+- Yanıt boyutları:
+  - playback 15 dk: 1,19 MB → 208 KB (gzip)
+  - iller: 206 KB → 98 KB (basitleştirme)
+- `make up-prod` 7 servis healthy, endpoint'ler çalışıyor. `make up` geri açıldı.
+- `make test` ve `make lint` temiz. Düzeltmeden sonra ingest'te `impossible_jump` reddi sıfır.
+
+**Sapmalar**
+
+- Plan'daki "sayfalama ya da sıkıştırma" için playback'te sıkıştırma seçildi (nginx gzip), sayfalama yok (D-042).
+- ICD'de `start`/`end` zorunlu görünüyordu; varsayılanlar eklendi (`end = now`, `start = end − 15 dk`).
+- `?simplify=` parametresi plan dışı ek (karşılaştırma ve learn için).
+
+**Bilinen sorunlar / notlar**
+
+- `geofence_events` hâlâ boş; olayları relay Faz 4'te yazacak.
+- Swagger UI, JS ve CSS'ini jsDelivr CDN'den yüklüyor; çevrimdışı tarayıcıda boş görünür (şema `/api/schema/` yine çalışır).
+- İl sınırları basitleştirildiğinde komşu iller arasında küçük boşluklar oluşabilir (topoloji korunmuyor); bölge zoom'unda görünmez.
+- API'de kimlik doğrulama yok; yalnızca yerel kullanım içindir.
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 2 onayı. Ardından Faz 3 (Django REST API): Faz 3 planı → DRF + drf-spectacular → `/api/aircraft/live` (bbox, < 100 ms), uçak detayı ve izi, havalimanları (KNN `<->` ile en yakın), iller (basitleştirilmiş geometri), geofence CRUD (+ `geofences.changed` yayını), hata formatı (ICD §7) → testler → `learn/07`.
+Proje sahibinin Faz 3 onayı. Ardından Faz 4 (gerçek zamanlı katman): Faz 4 planı → Channels + channels-redis, ASGI routing, `/ws/live/` consumer (subscribe, snapshot, bbox'a göre delta, geofence_event, heartbeat, backpressure) → `relay` management command'ı (positions.batch aboneliği, delta, saniyede 1 coalescing, tek sorguda geofence kontrolü + enter/exit state machine, yeniden başlatmada durumu son olaylardan kurma, `geofences.changed` ile cache yenileme) → testler → `learn/08`.

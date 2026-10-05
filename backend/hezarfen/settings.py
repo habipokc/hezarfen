@@ -24,6 +24,9 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.gis",
     "django.contrib.postgres",
+    "rest_framework",
+    "rest_framework_gis",
+    "drf_spectacular",
     "ops",
     "tracking",
     "reference",
@@ -80,6 +83,39 @@ DATABASES = {
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 POSITIONS_RETENTION_DAYS = int(os.environ.get("POSITIONS_RETENTION_DAYS", "7"))
+
+# Region of interest, same variables as ingest: [minLon, minLat, maxLon, maxLat]
+REGION_BBOX = (
+    float(os.environ.get("BBOX_LOMIN", "26.0")),
+    float(os.environ.get("BBOX_LAMIN", "39.5")),
+    float(os.environ.get("BBOX_LOMAX", "31.5")),
+    float(os.environ.get("BBOX_LAMAX", "42.0")),
+)
+# An aircraft counts as "live" if aircraft_latest saw it this recently (ICD §6.2)
+LIVE_WINDOW_SECONDS = 60
+INGEST_METRICS_URL = os.environ.get("INGEST_METRICS_URL", "http://ingest:8080/metrics")
+GEOFENCES_CHANGED_CHANNEL = os.environ.get("GEOFENCES_CHANGED_CHANNEL", "geofences.changed")
+
+REST_FRAMEWORK = {
+    # Read-only public data plus demo geofence editing: no accounts in this project.
+    # No authentication classes also means no SessionAuthentication, hence no CSRF
+    # check on POST/PATCH/DELETE for browsers that happen to hold an admin session.
+    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "UNAUTHENTICATED_USER": None,
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "EXCEPTION_HANDLER": "hezarfen.api.errors.exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Hezarfen API",
+    "DESCRIPTION": "Live air traffic and geospatial data for the Marmara region (ICD §7).",
+    "VERSION": "1.3.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

@@ -1,9 +1,7 @@
 from django.contrib import admin
-from django.urls import path
-
-from ops.views import health
+from django.urls import include, path
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/health", health, name="health"),
+    path("api/", include("hezarfen.api.urls")),
 ]
