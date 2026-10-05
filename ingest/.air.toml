@@ -1,0 +1,18 @@
+# air rebuilds and restarts the binary when a .go file changes (dev only).
+root = "."
+# build output outside the bind mount, so no root-owned files land in the repo
+tmp_dir = "/tmp/air"
+
+[build]
+cmd = "go build -o /tmp/air/ingest ./cmd/ingest"
+entrypoint = ["/tmp/air/ingest"]
+include_ext = ["go"]
+exclude_dir = ["testdata"]
+exclude_regex = ["_test\\.go$"]
+delay = 200
+# send SIGINT and wait, so graceful shutdown runs on every reload
+send_interrupt = true
+kill_delay = "5s"
+
+[log]
+time = true

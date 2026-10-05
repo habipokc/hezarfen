@@ -1,0 +1,30 @@
+# Secrets
+.env
+
+# Local learning notes (separate local git repo, never pushed)
+learn/
+
+# Data: raw recordings, downloads, DEM, tiles
+data/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+backend/staticfiles/
+
+# Go
+ingest/tmp/
+ingest/bin/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,54 @@
+# Dev overrides (auto-loaded by `docker compose`): source is bind-mounted and every
+# service reloads on file save. The repo lives on WSL ext4, so inotify events reach
+# the containers and no watcher needs polling.
+
+services:
+  backend:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/app
+    # uvicorn's reloader uses watchfiles (inotify) instead of Django's 1s stat polling
+    command:
+      - sh
+      - -c
+      - python manage.py migrate --noinput && exec uvicorn hezarfen.asgi:application --host 0.0.0.0 --port 8000 --reload --reload-dir /app
+
+  relay:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/app
+    # restart the long-running worker whenever a Python file changes
+    command: ["watchfiles", "--filter", "python", "python manage.py relay", "/app"]
+
+  ingest:
+    build:
+      target: dev
+    volumes:
+      - ./ingest:/src
+      - ./data:/data
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      start_period: 60s
+
+  frontend:
+    build:
+      target: dev
+    environment:
+      # browser reaches the HMR websocket through nginx on the host port
+      VITE_HMR_CLIENT_PORT: ${HEZARFEN_HTTP_PORT:-8800}
+    volumes:
+      - ./frontend:/app
+      # anonymous volume: keep the image's node_modules instead of the (absent) host
+      # copy; `make up` passes --renew-anon-volumes so it refreshes after rebuilds
+      - /app/node_modules
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      start_period: 30s
+
+volumes:
+  go-mod-cache:
+  go-build-cache:

@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "hezarfen.settings"
+python_files = ["test_*.py"]
+# cacheprovider off: the source dir is a bind mount and the container runs as root
+addopts = "-ra -p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "DJ"]

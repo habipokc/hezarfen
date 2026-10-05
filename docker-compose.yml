@@ -1,0 +1,153 @@
+# Production-like stack. docker-compose.override.yml (auto-loaded) turns it into
+# the dev stack with bind mounts and hot-reload. Run prod-like with:
+#   docker compose -f docker-compose.yml up --build
+#
+# No container_name anywhere: the project name prefixes every container, volume
+# and network (hezarfen-*), so nothing collides with other local projects.
+name: hezarfen
+
+x-env: &default-env
+  env_file:
+    - path: .env
+      required: false
+
+x-db-env: &db-env
+  POSTGRES_DB: ${POSTGRES_DB:-hezarfen}
+  POSTGRES_USER: ${POSTGRES_USER:-hezarfen}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hezarfen}
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  db:
+    image: postgis/postgis:18-3.6
+    <<: *default-env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hezarfen}
+      POSTGRES_USER: ${POSTGRES_USER:-hezarfen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hezarfen}
+    volumes:
+      # postgres 18+ images keep data under a major-version subdirectory of /var/lib/postgresql
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${HEZARFEN_DB_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.8-alpine
+    ports:
+      - "127.0.0.1:${HEZARFEN_REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      target: prod
+    <<: *default-env
+    environment:
+      <<: *db-env
+      DJANGO_ROLE: web
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  relay:
+    build:
+      context: ./backend
+      target: prod
+    <<: *default-env
+    environment:
+      <<: *db-env
+      DJANGO_ROLE: relay
+    command: ["python", "manage.py", "relay"]
+    depends_on:
+      # backend runs migrations on start; relay needs the schema to exist
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # relay touches this file every few seconds while its loop is alive
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/relay-heartbeat') < 30 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  ingest:
+    build:
+      context: ./ingest
+      target: prod
+    <<: *default-env
+    environment:
+      <<: *db-env
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    depends_on:
+      # ingest writes to tables owned by Django migrations
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/ingest", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: prod
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.30-alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./data/tiles:/srv/tiles:ro
+    ports:
+      - "${HEZARFEN_HTTP_PORT:-8800}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:
