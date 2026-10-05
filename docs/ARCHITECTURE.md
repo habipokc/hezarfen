@@ -79,6 +79,21 @@ sequenceDiagram
     end
 ```
 
+## Reference data load (`make seed`)
+
+```mermaid
+flowchart LR
+    OA[OurAirports airports.csv] -->|curl, cached in data/reference| O1
+    NE[Natural Earth admin-1 zip] -->|curl, cached| O2
+    FX[scripts/fixtures/*.geojson] -.->|fallback| O1 & O2
+    O1["ogr2ogr: CSV -> points<br/>-where type, -spat region"] --> S1[(stage_airports)]
+    O2["ogr2ogr: /vsizip/ shapefile<br/>-where TUR, PROMOTE_TO_MULTI"] --> S2[(stage_provinces)]
+    S1 & S2 -->|"ogrinfo check, then manage.py import_reference<br/>(upsert + delete, one transaction)"| T[(airports, provinces)]
+    T -->|"seed_geofences: ST_Buffer(geography, 15 km)"| G[(geofences)]
+```
+
+Django apps: `tracking` (aircraft, aircraft_latest, positions), `reference` (airports, provinces), `geofencing` (geofences, geofence_events), `terrain` (Phase 7), `ops` (health, ops panel).
+
 ## Environments
 
 - **Dev** (`make up`): `docker-compose.yml` + `docker-compose.override.yml`. Source is bind-mounted; uvicorn (`--reload`, watchfiles), `watchfiles` for the relay, `air` for Go and Vite HMR reload on save via inotify (the repo lives on WSL ext4).

@@ -1,0 +1,12 @@
+{
+  "type": "FeatureCollection",
+  "name": "provinces_fixture",
+  "description": "Hand-made offline fallback for Natural Earth admin-1; property names match the shapefile. Boundaries are coarse approximations, good enough for tests and demos only.",
+  "features": [
+    { "type": "Feature", "properties": { "name": "Istanbul", "name_tr": "İstanbul", "iso_3166_2": "TR-34", "adm0_a3": "TUR" }, "geometry": { "type": "Polygon", "coordinates": [[[28.0, 41.10], [28.6, 41.55], [29.4, 41.25], [29.88, 41.15], [29.85, 40.85], [29.35, 40.80], [28.6, 40.97], [28.0, 41.0], [28.0, 41.10]]] } },
+    { "type": "Feature", "properties": { "name": "Kocaeli", "name_tr": "Kocaeli", "iso_3166_2": "TR-41", "adm0_a3": "TUR" }, "geometry": { "type": "Polygon", "coordinates": [[[29.88, 41.15], [30.35, 41.20], [30.35, 40.60], [29.90, 40.55], [29.85, 40.85], [29.88, 41.15]]] } },
+    { "type": "Feature", "properties": { "name": "Tekirdag", "name_tr": "Tekirdağ", "iso_3166_2": "TR-59", "adm0_a3": "TUR" }, "geometry": { "type": "Polygon", "coordinates": [[[26.95, 41.0], [27.2, 41.35], [28.0, 41.10], [28.0, 41.0], [27.6, 40.6], [26.95, 40.70], [26.95, 41.0]]] } },
+    { "type": "Feature", "properties": { "name": "Bursa", "name_tr": "Bursa", "iso_3166_2": "TR-16", "adm0_a3": "TUR" }, "geometry": { "type": "Polygon", "coordinates": [[[28.2, 40.40], [29.0, 40.45], [29.4, 40.55], [29.9, 40.40], [29.9, 39.9], [29.2, 39.6], [28.3, 39.7], [28.2, 40.40]]] } },
+    { "type": "Feature", "properties": { "name": "Thessaloniki", "name_tr": "Selanik", "iso_3166_2": "GR-54", "adm0_a3": "GRC" }, "geometry": { "type": "Polygon", "coordinates": [[[22.6, 40.4], [23.4, 40.4], [23.4, 40.9], [22.6, 40.9], [22.6, 40.4]]] } }
+  ]
+}

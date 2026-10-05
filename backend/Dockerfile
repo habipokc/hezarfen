@@ -28,6 +28,8 @@ FROM base AS prod
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 COPY . .
+# hashed + compressed admin assets, served by WhiteNoise (STORAGES in settings)
+RUN DJANGO_DEBUG=0 python manage.py collectstatic --noinput
 RUN useradd --system --uid 10001 app && chown -R app /app
 USER app
 EXPOSE 8000

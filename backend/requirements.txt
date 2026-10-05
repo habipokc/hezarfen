@@ -3,3 +3,4 @@ Django==6.1.1
 psycopg[binary]==3.3.6
 redis==8.1.0
 uvicorn[standard]==0.54.0
+whitenoise==6.12.0

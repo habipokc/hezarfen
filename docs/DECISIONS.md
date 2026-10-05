@@ -105,3 +105,73 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** Docker Desktop açılıştan sonra WSL'de `/var/run/docker.sock` oluşmazsa Docker Desktop yeniden başlatılır.
 - **Neden:** Ubuntu entegrasyonu ayarlarda açık olduğu halde proxy süreci başlamadı; Windows tarafında yeniden başlatma 20 sn'de soketi getirdi. Kod değişikliği gerektirmiyor; bir sonraki oturumda aynı belirti görülürse ilk yapılacak şey bu.
 - **Alternatif:** WSL içine ayrı Docker Engine kurmak; spec host'a araç kurmamayı tercih ediyor.
+
+## D-015 — Referans veri ayrı bir `reference` app'inde
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `airports` ve `provinces` modelleri `reference` app'inde. App listesi: `tracking`, `reference`, `geofencing`, `terrain`, `ops`.
+- **Neden:** PLAN §5 "tracking veya ayrı reference modülü" seçeneğini bırakıyor. Havalimanı ve il verisi uçak takibinden bağımsız, nadiren değişen ve dışarıdan yüklenen bir katman. `tracking` yalnızca ingest'in yazdığı tablolara odaklanıyor.
+- **Alternatif:** İkisini `tracking` içine koymak. Bir app eksik olurdu ama "canlı veri" ile "statik referans" karışırdı.
+
+## D-016 — ogr2ogr staging tablolarına yazar, `import_reference` Django tablolarına aynalar
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `scripts/load_reference_data.sh`, ogr2ogr ile `stage_airports` ve `stage_provinces` tablolarına `-overwrite` yazar. Ardından `manage.py import_reference` tek transaction'da bunları `airports` ve `provinces` tablolarına `INSERT … ON CONFLICT DO UPDATE` ile aktarır, staging'de olmayanları siler ve staging tablolarını düşürür.
+- **Neden:** Şemanın sahibi Django (ICD §3). ogr2ogr'un hedef tabloya `-overwrite` yazması Django'nun tablosunu silip kendi şemasıyla yeniden yaratırdı (migration'la uyumsuz kolon tipleri, index adları). Böylece işler bölünüyor: ogr2ogr format okuma, geometri üretme ve filtrelemeyi yapıyor; Django şemayı ve upsert'i yönetiyor. İşlem idempotent; script tekrar tekrar çalıştırılabilir.
+- **Alternatif:** ogr2ogr `-append` ile doğrudan Django tablosuna yazmak. Kolon eşleme `-sql` ile yapılabilir ama tekrar çalıştırmada kopya satır oluşur ve "güncelle ya da sil" mantığı kurulamaz.
+
+## D-017 — `positions.icao24` foreign key değil; ayrı `(icao24, ts)` B-tree yok
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `positions.icao24` düz bir `varchar(6)`. `(icao24, ts)` için yalnızca unique constraint var.
+- **Neden:** `positions` en sık yazılan, append-only zaman serisi tablosu. FK her insert'te `aircraft` tablosunda bir kontrol yapar ve yükleme sırasını zorunlu kılar. Tarihçe de uçak kaydından bağımsız yaşayabilmeli. Unique constraint zaten `(icao24, ts)` üzerinde bir B-tree index yaratıyor; PLAN'daki ayrı B-tree aynı index'in kopyası olurdu.
+- **Alternatif:** FK + ayrı index. Bütünlük kontrolü kazanılır, yazma maliyeti ve disk iki katına çıkar.
+
+## D-018 — Ingest'in güvendiği default'lar `db_default` ile kolonda
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `on_ground` (`false`) ve `source` (`live`) `db_default` ile tanımlandı.
+- **Neden:** Django'nun `default=` parametresi yalnızca Python tarafında, ORM ile kayıt oluşturulurken uygulanır; veritabanı kolonunda default oluşmaz. Ingest ham SQL ile yazdığı için ilk test turunda `null value in column "source"` hatası alındı. `db_default` default'u DDL'e yazar.
+- **Alternatif:** Ingest'in her kolonu her zaman göndermesi. ICD'de zaten öyle, ama veritabanının kendi kendini koruması daha sağlam.
+
+## D-019 — Static dosyalar WhiteNoise ile (dev + prod); D-012 kapandı
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `whitenoise` middleware'i. Dev'de `WHITENOISE_USE_FINDERS` ve autorefresh açık, collectstatic gerekmiyor. Prod'da imaj build'inde `collectstatic` çalışıyor; dosyalar `CompressedManifestStaticFilesStorage` ile hash'li ve gzip'li, `Cache-Control: immutable` ile servis ediliyor.
+- **Neden:** Django'nun static servisi yalnızca `runserver`'a özgü; uvicorn kullandığımız için dev'de de admin CSS'i servis edilmiyordu. WhiteNoise tek bağımlılıkla iki ortamı da çözüyor.
+- **Alternatif:** collectstatic çıktısını bir volume ile gateway nginx'e vermek. Daha "klasik" ama ek volume ve dev/prod farkı demek.
+
+## D-020 — `make up-prod` `DJANGO_DEBUG=0`'ı zorlar
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `x-db-env` içinde `DJANGO_DEBUG: ${DJANGO_DEBUG:-0}`; `make up-prod` komutu `DJANGO_DEBUG=0` export ederek çalışır.
+- **Neden:** Prod smoke testinde `.env`'deki dev değeri (`1`) `env_file` üzerinden prod-like stack'e de geçiyordu; yani Faz 0'daki "prod" testi aslında DEBUG açıkken yapılmıştı. Compose'da `environment`, `env_file`'ı ezer; interpolasyonda da shell değişkeni `.env`'i ezer.
+- **Alternatif:** Ayrı bir `.env.prod`. Daha esnek ama ikinci bir env dosyasının bakımı gerekir.
+
+## D-021 — `make seed`: host kullanıcısıyla, önbellekli indirme, fixture yedeği
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `make seed` tek bir backend container'ı `--user $(id -u):$(id -g)` ile ve `scripts/` ile `data/` mount edilmiş olarak çalıştırır: migrate → load script → `seed_geofences`. İndirilen dosyalar `data/reference/` altında önbelleğe alınır. İndirme ya da yükleme başarısız olursa veya `REFERENCE_OFFLINE=1` verilirse aynı ogr2ogr akışı `scripts/fixtures/*.geojson` ile çalışır (8 havalimanı, 4 kaba il sınırı; filtrelerin işlediğini göstermek için bölge dışı ve tip dışı birer kayıt da var).
+- **Neden:** Dev container'ları root çalışıyor (D-013); indirmeler host'ta root'a ait dosya bırakmasın. Önbellek tekrar çalıştırmayı 7 saniyeye indiriyor ve ağ olmadan da çalışmayı sağlıyor.
+- **Alternatif:** Script'i host'ta çalıştırmak (GDAL host'a kurulmaz, spec'e aykırı) veya ayrı bir GDAL imajı (`ghcr.io/osgeo/gdal`). Backend imajında zaten `gdal-bin` var, ikinci imaj gereksiz.
+
+## D-022 — Referans veride birim ve isim normalizasyonu
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** Havalimanı yüksekliği `elevation_ft * 0.3048` ile `elevation_m`'ye çevrilir (ICD: irtifa metre). İl adı Natural Earth'ün `name_tr` alanından alınır, boşsa `name`. Boş CSV hücreleri `NULL` olur. İl geometrileri `ST_MakeValid` + `ST_Multi`'den geçer.
+- **Neden:** Tüm arayüzlerde tek birim sistemi. `name` alanı ASCII'ye indirgenmiş ("Sirnak"), `name_tr` doğru yazılmış ("Şırnak").
+- **Alternatif:** Ham değerleri saklayıp API'de çevirmek. Her tüketici dönüşümü tekrarlardı.
+
+## D-023 — Geofence seed: geography buffer, 64 köşe, havalimanı verisine bağımlı
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** `seed_geofences`, `ST_Buffer(geom::geography, 15000, 'quad_segs=16')` ile 64 köşeli bir çember üretir; merkez `airports` tablosundaki LTFM ve LTFJ'dir. Havalimanları yüklenmemişse komut açık bir hata verir. Geofence'ler `name` + `kind` ile `update_or_create` edilir.
+- **Neden:** Metre cinsinden doğru yarıçap (test: tüm köşeler 15 km ± 100 m, alan 706 km² ≈ π·15²). 64 köşe, relay'in her batch'te çalıştıracağı `ST_Contains` için yeterince hassas ve ucuz. Koordinatları koda gömmek referans veriyle çelişebilirdi.
+- **Alternatif:** Koda gömülü koordinatlar. Bağımsız çalışır ama iki doğruluk kaynağı olur.
+
+## D-024 — `prune_positions` Faz 1'de
+
+- **Tarih:** 2026-10-05 (Faz 1)
+- **Karar:** PLAN §5'teki retention komutu modellerle birlikte Faz 1'de yazıldı (`make prune`). Zamanlanmış çalıştırma (cron) henüz yok.
+- **Neden:** Komut yalnızca `positions` modeline bağlı ve test edilmesi kolay. Zamanlama Faz 8'deki ops işleriyle birlikte ele alınacak.
+- **Alternatif:** Faz 2'de ingest ile birlikte yazmak.

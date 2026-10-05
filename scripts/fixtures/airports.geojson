@@ -1,0 +1,17 @@
+{
+  "type": "FeatureCollection",
+  "name": "airports_fixture",
+  "description": "Hand-made offline fallback for OurAirports; property names match airports.csv. Coordinates and elevations are approximate.",
+  "features": [
+    { "type": "Feature", "properties": { "ident": "LTFM", "type": "large_airport", "name": "Istanbul Airport", "elevation_ft": 325, "iso_country": "TR", "municipality": "Istanbul", "iata_code": "IST", "gps_code": "LTFM" }, "geometry": { "type": "Point", "coordinates": [28.7519, 41.2753] } },
+    { "type": "Feature", "properties": { "ident": "LTFJ", "type": "large_airport", "name": "Istanbul Sabiha Gokcen International Airport", "elevation_ft": 312, "iso_country": "TR", "municipality": "Istanbul", "iata_code": "SAW", "gps_code": "LTFJ" }, "geometry": { "type": "Point", "coordinates": [29.3092, 40.8986] } },
+    { "type": "Feature", "properties": { "ident": "LTBA", "type": "medium_airport", "name": "Istanbul Ataturk Airport", "elevation_ft": 163, "iso_country": "TR", "municipality": "Istanbul", "iata_code": "ISL", "gps_code": "LTBA" }, "geometry": { "type": "Point", "coordinates": [28.8146, 40.9769] } },
+    { "type": "Feature", "properties": { "ident": "LTBU", "type": "medium_airport", "name": "Tekirdag Corlu Ataturk Airport", "elevation_ft": 574, "iso_country": "TR", "municipality": "Corlu", "iata_code": "TEQ", "gps_code": "LTBU" }, "geometry": { "type": "Point", "coordinates": [27.9191, 40.9583] } },
+    { "type": "Feature", "properties": { "ident": "LTBR", "type": "medium_airport", "name": "Bursa Yenisehir Airport", "elevation_ft": 764, "iso_country": "TR", "municipality": "Bursa", "iata_code": "YEI", "gps_code": "LTBR" }, "geometry": { "type": "Point", "coordinates": [29.5626, 40.2552] } },
+    { "type": "Feature", "properties": { "ident": "LTBQ", "type": "medium_airport", "name": "Kocaeli Cengiz Topel Airport", "elevation_ft": 182, "iso_country": "TR", "municipality": "Kocaeli", "iata_code": "KCO", "gps_code": "LTBQ" }, "geometry": { "type": "Point", "coordinates": [30.0833, 40.7350] } },
+    { "type": "Feature", "properties": { "ident": "LTBH", "type": "medium_airport", "name": "Canakkale Airport", "elevation_ft": 23, "iso_country": "TR", "municipality": "Canakkale", "iata_code": "CKZ", "gps_code": "LTBH" }, "geometry": { "type": "Point", "coordinates": [26.4268, 40.1377] } },
+    { "type": "Feature", "properties": { "ident": "LTBF", "type": "medium_airport", "name": "Balikesir Merkez Airport", "elevation_ft": 340, "iso_country": "TR", "municipality": "Balikesir", "iata_code": "BZI", "gps_code": "LTBF" }, "geometry": { "type": "Point", "coordinates": [27.9260, 39.6193] } },
+    { "type": "Feature", "properties": { "ident": "LGKV", "type": "medium_airport", "name": "Kavala Alexander the Great International Airport", "elevation_ft": 18, "iso_country": "GR", "municipality": "Kavala", "iata_code": "KVA", "gps_code": "LGKV" }, "geometry": { "type": "Point", "coordinates": [24.6192, 40.9133] } },
+    { "type": "Feature", "properties": { "ident": "LTX1", "type": "heliport", "name": "Example Heliport (filtered out by type)", "elevation_ft": 100, "iso_country": "TR", "municipality": "Istanbul", "iata_code": "", "gps_code": "" }, "geometry": { "type": "Point", "coordinates": [29.0, 41.05] } }
+  ]
+}

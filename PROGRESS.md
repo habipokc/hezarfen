@@ -6,8 +6,8 @@
 
 | Faz | Durum |
 |---|---|
-| 0 — İskelet, altyapı, ICD | ✅ Tamamlandı (tag `phase-0`) — onay bekleniyor |
-| 1 — Django, GeoDjango, referans veri | ⏳ |
+| 0 — İskelet, altyapı, ICD | ✅ Tamamlandı (tag `phase-0`) |
+| 1 — Django, GeoDjango, referans veri | ✅ Tamamlandı (tag `phase-1`) — onay bekleniyor |
 | 2 — Go ingest | ⏳ |
 | 3 — REST API | ⏳ |
 | 4 — Gerçek zamanlı katman | ⏳ |
@@ -53,6 +53,46 @@ Plan: `docs/superpowers/plans/2026-10-05-phase-0.md`.
 - `learn/01-altyapi.md` ~4.300 kelime (hedef 1.500–3.500); tablo ve başlıklar dahil sayım, içerik bilerek korundu.
 - Ingest prod imajı `nonroot` kullanıcıyla çalışıyor; Faz 2'de `data/raw`'a yazarken izinler ele alınmalı.
 
+## Faz 1 — Django, GeoDjango ve referans veri (2026-10-05)
+
+Plan: `docs/superpowers/plans/2026-10-05-phase-1.md`.
+
+**Tamamlananlar**
+
+- App'ler: `tracking` (aircraft, aircraft_latest, positions), `reference` (airports, provinces), `geofencing` (geofences, geofence_events), `terrain` (boş, Faz 7), `ops`. Tablo adları `Meta.db_table` ile sabit.
+- Index'ler: tüm geometri kolonlarında GiST; `positions.ts` üzerinde BRIN; `(icao24, ts)` unique constraint (ingest `ON CONFLICT DO NOTHING`). `on_ground` ve `source` için `db_default`.
+- ICD 1.1: IF-2 tablolarının kolon listesi eklendi (Go servisi için).
+- Admin: geofence, havalimanı ve il ekranlarında OpenLayers harita widget'ı (Marmara'ya ortalı); ingest tabloları ve geofence olayları salt okunur.
+- Static: WhiteNoise. Dev'de finders, prod'da build sırasında `collectstatic`; hash'li, gzip'li, `immutable` cache. D-012 kapandı.
+- `scripts/load_reference_data.sh`: OurAirports CSV ve Natural Earth admin-1 (`/vsizip/`) → ogr2ogr (`-where`, `-spat`, `-select`, `-a_srs`/`-t_srs`, `-nlt PROMOTE_TO_MULTI`) → staging tabloları → `ogrinfo` kontrolü → `manage.py import_reference` (tek transaction'da upsert ve silme). Önbellek `data/reference/`. Yedek yol: `scripts/fixtures/*.geojson` (`REFERENCE_OFFLINE=1` ile de tetiklenir).
+- Komutlar: `import_reference`, `seed_geofences` (geography `ST_Buffer` 15 km, 64 köşe, idempotent), `prune_positions` (`--days`, varsayılan `POSITIONS_RETENTION_DAYS`).
+- Makefile: `seed` (host UID ile; migrate → load → seed_geofences), `prune`, `superuser`; `lint-backend` içine `makemigrations --check`. Aynı kontrol CI'da da var.
+- `make up-prod` artık `DJANGO_DEBUG=0` ile çalışıyor (D-020).
+- Testler: 16 pytest testi (gerçek PostGIS). Kapsam: unique ve idempotent insert, index türleri, buffer içi ve dışı, "her yönde 15 km", derece buffer'ının elips üretmesi, il sorgusu, seed idempotency, import upsert ve aynalama, prune.
+- Dokümanlar: DECISIONS D-015…D-024, ARCHITECTURE (referans veri akışı), README (seed, superuser, veri kaynakları).
+- Learn: `02-django-temelleri.md`, `03-postgis-ve-geodjango.md`, `04-gdal-ogr-vektor.md`; `00-basla-buradan.md` güncellendi.
+
+**Doğrulanan kabul kriterleri**
+
+- `make seed` → 21 havalimanı, 81 il (geçersiz geometri yok), 2 geofence. Önbellekle 7 sn. `make seed REFERENCE_OFFLINE=1` → 8 havalimanı ve 4 il; bölge dışı ve tip dışı kayıtlar filtrelendi.
+- Spatial kontroller: (28.98, 41.01) → İstanbul; buffer alanı 706 km² (π·15² ≈ 707); `EXPLAIN` GiST kullanıyor.
+- Admin: giriş, liste ve düzenleme sayfaları 200. Admin formundan geofence ekleme denendi; EPSG:3857 gönderilen geometri 4326'da doğru koordinatlarla kaydedildi.
+- Static: dev'de `/static/admin/css/base.css` 200; prod'da (`DEBUG=0`) hash'li dosya 200, gzip ve `immutable`.
+- `make up` ve `make up-prod` → 7 servis healthy. `make test` ve `make lint` temiz.
+
+**Sapmalar**
+
+- Referans tablolar PLAN'daki "tracking veya ayrı modül" seçeneğinden ayrı `reference` app'inde (D-015).
+- `positions` için ayrı `(icao24, ts)` B-tree yok, unique constraint'in index'i kullanılıyor; `positions.icao24` FK değil (D-017).
+- `prune_positions` §5'ten Faz 1'e alındı; zamanlama henüz yok (D-024).
+
+**Bilinen sorunlar / notlar**
+
+- Admin harita widget'ı OpenLayers JS'ini ve OSM karolarını internetten yüklüyor; çevrimdışı tarayıcıda harita görünmez, form yine çalışır.
+- GeoDjango'da `distance_lte` WHERE içinde `ST_DistanceSphere` üretiyor ve index kullanmıyor. Faz 3'teki "en yakın havalimanı" sorgusu KNN (`<->`) ya da geography `ST_DWithin` ile yazılmalı.
+- `make seed` dev imajını kullanıyor (prod stack çalışırken de çalışır; tek seferlik container).
+- Faz 0'dan kalan: ingest prod imajı `nonroot` (Faz 2'de `data/raw` izinleri).
+
 ## Sıradaki adım
 
-Proje sahibinin Faz 0 onayı. Ardından Faz 1: `docs/superpowers/plans/` altına Faz 1 planı → modeller/migration'lar (`geofencing`, `terrain` app'leri eklenecek) → admin harita widget'ı + prod static çözümü → `scripts/load_reference_data.sh` (ogr2ogr) → `seed_geofences` → pytest spatial testler → `learn/02`, `03`, `04`.
+Proje sahibinin Faz 1 onayı. Ardından Faz 2 (Go ingest): Faz 2 planı → `internal/{config,opensky,source,store,publish,geo}` → synthetic üretici (haversine ve great-circle için TDD) → replay → live (OAuth2, adaptive polling, raw zone kaydı) → PostGIS'e batch yazma (ICD §3 kolonları) + Redis `positions.batch/v1` → `scripts/record_fixture.sh` → `learn/05`, `06`.

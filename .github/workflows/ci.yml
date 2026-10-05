@@ -66,6 +66,8 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: ruff format --check .
+      - name: Models and migrations are in sync
+        run: python manage.py makemigrations --check --dry-run
       - run: pytest
 
   frontend:

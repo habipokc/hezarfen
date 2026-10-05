@@ -52,6 +52,28 @@ The schema is owned by Django migrations (`backend/tracking/migrations`). Table 
 
 Geometry is written as `ST_SetSRID(ST_MakePoint(lon, lat), 4326)`. Timestamps are `timestamptz` in the database and Unix seconds on every wire format.
 
+**Columns** (from `backend/tracking/models.py`; units as in §2):
+
+| Table | Column | Type | Null | Notes |
+|---|---|---|---|---|
+| `aircraft` | `icao24` | `varchar(6)` | no | primary key |
+| | `callsign` | `varchar(8)` | yes | |
+| | `origin_country` | `varchar(64)` | yes | |
+| | `category` | `smallint` | yes | OpenSky emitter category |
+| | `first_seen`, `last_seen` | `timestamptz` | no | |
+| `aircraft_latest` | `icao24` | `varchar(6)` | no | primary key, FK → `aircraft` (deferred); upsert `aircraft` first in the same transaction |
+| `aircraft_latest`, `positions` | `ts` | `timestamptz` | no | position timestamp |
+| | `geom` | `geometry(Point, 4326)` | no | GiST index |
+| | `baro_altitude`, `geo_altitude` | `double precision` | yes | m |
+| | `velocity` | `double precision` | yes | m/s |
+| | `heading` | `double precision` | yes | degrees |
+| | `vertical_rate` | `double precision` | yes | m/s |
+| | `on_ground` | `boolean` | no | DB default `false` |
+| | `squawk` | `varchar(4)` | yes | |
+| | `source` | `varchar(10)` | no | `live` \| `replay` \| `synthetic`, DB default `live` |
+| `positions` | `id` | `bigint` identity | no | generated; never supplied by ingest |
+| | `icao24` | `varchar(6)` | no | not a FK; unique with `ts`; BRIN index on `ts` |
+
 ---
 
 ## 4. IF-3 — Redis `positions.batch` (ingest → relay)
@@ -280,3 +302,4 @@ Served on `ingest:8080` (compose network only; not routed by nginx).
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-05 | Initial baseline (Phase 0) |
+| 1.1 | 2026-10-05 | IF-2: column list for `aircraft`, `aircraft_latest`, `positions` (Phase 1). Backward-compatible |
