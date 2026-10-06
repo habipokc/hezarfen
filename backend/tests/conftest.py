@@ -21,6 +21,17 @@ def in_memory_channel_layer(settings):
 
 
 @pytest.fixture(autouse=True)
+def plain_static_storage(settings):
+    """With DEBUG off (CI, prod) settings pick WhiteNoise's hashed manifest storage, and
+    {% static %} then needs `collectstatic` to have run. Tests render templates, not built
+    assets; the CI stack job checks the real manifest (prod image + smoke test)."""
+    settings.STORAGES = {
+        **settings.STORAGES,
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+
+
+@pytest.fixture(autouse=True)
 def test_retention_key(settings):
     """Retention runs record themselves in Redis; keep tests off the dev stack's record."""
     settings.OPS_RETENTION_KEY = "test:ops:retention:last"

@@ -4,6 +4,8 @@ python_files = ["test_*.py"]
 # cacheprovider off: the source dir is a bind mount and the container runs as root
 addopts = "-ra -p no:cacheprovider"
 asyncio_default_fixture_loop_scope = "function"
+# WhiteNoise with DEBUG off looks for STATIC_ROOT, which only `collectstatic` (prod image) creates
+filterwarnings = ["ignore:No directory at:UserWarning"]
 
 [tool.ruff]
 line-length = 100

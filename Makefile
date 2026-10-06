@@ -42,7 +42,8 @@ test: test-ingest test-frontend test-backend ## Run all test suites
 
 test-backend: ## pytest against the real PostGIS
 	$(COMPOSE) up -d --wait db redis
-	$(COMPOSE) run --rm backend pytest
+	@# DEBUG off as in CI: .env's DJANGO_DEBUG=1 once hid a CI-only failure (D-097)
+	$(COMPOSE) run --rm -e DJANGO_DEBUG=0 backend pytest
 
 test-ingest: ## go test (store/publish integration tests use the stack's db and redis)
 	$(COMPOSE) up -d --wait db redis

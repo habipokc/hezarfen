@@ -802,3 +802,10 @@ Her kayıt: **tarih**, **karar**, **neden**, **alternatif(ler)**. Bu dosya `lear
 - **Karar:** Commit'lenecek ağaç (`git ls-files -co --exclude-standard`) scratch dizinine kopyalandı; `.env`'de portlar 8801/55433/56380, komutlar `COMPOSE="docker compose -p hezarfen-clean"` ile çalıştı: `make up`, `make seed`, `make smoke`, `make test`, `make dem DEM_SOURCE=synthetic`, `make ui-smoke`. Bitince `down -v`.
 - **Neden:** `-p` compose dosyasındaki `name:`'i ezer; ayrı proje adı ayrı volume (boş veritabanı) ve ayrı container demek. Çalışan geliştirme yığınına ve verisine dokunmadan "ilk kez kuran biri" senaryosu. Bu kontrol iki gerçek hata buldu (D-094, D-095) ve bir smoke hatası (sentetik DEM'de checkbox etiketi).
 - **Alternatif:** Ana yığını `make clean` ile silip yeniden kurmak (geliştirme verisi kaybolur, iki yığın yan yana denenemez).
+
+## D-097 — Testler statik dosya derlemesine bağlı değil; yerel testler DEBUG kapalı
+
+- **Tarih:** 2026-10-06 (Faz 8 sonrası, ilk GitHub CI koşusu)
+- **Karar:** `tests/conftest.py`'de otomatik bir fixture testlerde `StaticFilesStorage` kullanıyor. `make test-backend` pytest'i `DJANGO_DEBUG=0` ile çalıştırıyor.
+- **Neden:** İlk gerçek CI koşusunda üç ops testi `Missing staticfiles manifest entry for 'ops/ops.css'` ile düştü. CI'da `DJANGO_DEBUG` tanımlı değil, yani DEBUG kapalı; settings bu durumda WhiteNoise'un hash'li manifest depolamasını seçiyor, `{% static %}` de önceden `collectstatic` istiyor. Yerelde `.env`'deki `DJANGO_DEBUG=1` basit depolamayı seçtirdiği için hata hiç görünmedi. Ops paneli `{% static %}` kullanan ilk şablondu. Gerçek manifest CI'ın `stack` job'ında prod imajıyla (collectstatic + smoke'un hash'li htmx kontrolü) zaten sınanıyor.
+- **Alternatif:** CI'a `collectstatic` adımı eklemek (Copilot önerisi). CI geçerdi ama yerel testler başka bir yoldan koşmaya devam ederdi; asıl sorun olan ortam farkı kalırdı.
